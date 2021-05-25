@@ -19,7 +19,11 @@ function getTypeFromJava(javaType)
 end
 
 function getModule(name)
-    res_module = try eval(Meta.parse("@which $name")) catch _ end
+    res_module = 
+        try
+            eval(Meta.parse("@which $name"))
+        catch _
+        end
     if res_module === nothing
       res_module = eval(Meta.parse("module $name using JavaCall end"))
     end
@@ -43,12 +47,15 @@ function importJavaLib(javaLib)
 
         variables = ""
         julia_param_types = ""
+        julia_variables_with_types = variables
         if (length(java_param_types) != 0)
             variables = join(map( type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
-            julia_param_types = join(map(type -> getTypeFromJava(getname(type)), java_param_types), ", ") * ","
+            julia_param_types = map(type -> getTypeFromJava(getname(type)), java_param_types)
+            julia_variables_with_types = join(map( type -> "x$(type[1])::$(julia_param_types[type[1]])", enumerate(java_param_types)), ", ") * ","
+            julia_param_types = join(julia_param_types, ", ") * ","
         end
 
-        method_to_parse = "function $method_name($variables) jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables) end"
+        method_to_parse = "function $method_name($julia_variables_with_types) jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables) end"
         Base.eval(curr_module, Meta.parse(method_to_parse))
     end
     
@@ -56,10 +63,11 @@ function importJavaLib(javaLib)
 end
 
 Math = importJavaLib("java.lang.Math")
-Math.ulp(1.2)
+Math.min(1, 2)
+Math.min(1.3, 1.2)
 
 Datetime = importJavaLib("java.time.LocalDate")
-Datetime.now()
+# Datetime.now()
 # Datetime.plusDays(Datetime.now(), 5)
 
 # plus_days(datetime, days) = jcall(datetime,"plusDays", jtLD, (jlong,), days)
@@ -85,6 +93,6 @@ jtLD = @jimport java.time.LocalDate
 # -[ ] Only declare static methods in module, if we can
 # -[x] Only generate module if module hasn't been imported
 # -[ ] Methods with arrays???
-# -[ ] Typify method arguments?
+# -[x] Typify method arguments?
 
 # Para saber os métodos dum módulo: names(Math, all=true)
