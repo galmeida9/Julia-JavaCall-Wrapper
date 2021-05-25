@@ -18,15 +18,20 @@ function getTypeFromJava(javaType)
     # TODO: verify for arrays
 end
 
+function getModule(name)
+    res_module = try eval(Meta.parse("@which $name")) catch _ end
+    if res_module === nothing
+      res_module = eval(Meta.parse("module $name using JavaCall end"))
+    end
+    return res_module
+end
+
 
 function importJavaLib(javaLib)
     lib = eval(Meta.parse("@jimport $javaLib"))
 
-    # Define module
-    methods_to_parse = Set()
-    # TODO: Generate module only if it is the first time imported
-    module_name = "$(replace(javaLib, '.' => '_'))$(rand(1:typemax(Int)))"
-    curr_module = eval(Meta.parse("module $module_name using JavaCall end"))
+    module_name = "$(replace(javaLib, '.' => '_'))"
+    curr_module = getModule(module_name)
 
     methods = listmethods(lib)
     for method in methods
@@ -62,13 +67,24 @@ Datetime.now()
 
 # Datetime.metodo(x, y)
 
+jtLD = @jimport java.time.LocalDate
+
+# plusDays = (instance) -> (weeks)  -> jcall(instance,"plusDays", jtLD, (jlong,), weeks)
+# Base.getproperty(jv::JavaObject{Symbol("java.time.LocalDate")}, sym::Symbol) = 
+#     Dict(
+#       :plusDays=> (jtld) ->(days) ->JavaValue(jcall(jtld,"plusDays", jtLD, (jlong,), days),jtLDMethods)
+#     )[sym](jv)
+
+# Base.getproperty(jv::JavaObject{Symbol("java.time.LocalDate")}, sym::Symbol) = Base.getproperty(jv::JavaObject{Symbol("java.time.LocalDate")}, sym::Symbol)
+
 # a = Datetime.now()
 # a.plus_days(4)
 
 # TODOs:
 # -[ ] Add instance methods
 # -[ ] Only declare static methods in module, if we can
-# -[ ] Only generate module if module hasn't been imported
+# -[x] Only generate module if module hasn't been imported
 # -[ ] Methods with arrays???
+# -[ ] Typify method arguments?
 
 # Para saber os métodos dum módulo: names(Math, all=true)
