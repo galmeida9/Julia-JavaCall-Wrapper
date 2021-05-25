@@ -1,8 +1,15 @@
 using JavaCall
 JavaCall.init(["-Xmx128M"])
 
+# TODO: Improve naming of include
+include("project_struct.jl")
+using Main.project_struct
+
+
 # Convert Java Objects to String with toString method 
 Base.show(io::IO, obj::JavaObject) = print(io, jcall(obj,"toString", JString, ()))
+Base.show(io::IO, obj::JavaValue) = print(io, jcall(getfield(obj, :ref),"toString", JString, ()))
+Base.getproperty(jv::JavaValue, sym::Symbol) = getfield(getfield(jv, :methods), sym)(getfield(jv, :ref))
 
 function getTypeFromJava(javaType)
     primitiveTypes = ["boolean", "char", "int", "long", "float", "double"]
@@ -18,24 +25,27 @@ function getTypeFromJava(javaType)
     # TODO: verify for arrays
 end
 
+function isPrimitive(javaType)
+    # TODO: What about arrays?
+    return javaType in ["boolean", "char", "int", "long", "float", "double", "void"]
+end
+
 function getModule(name)
-    res_module = 
         try
             eval(Meta.parse("@which $name"))
         catch _
+            eval(Meta.parse("module $name
+                            using Main.project_struct, JavaCall
+                            end"))
         end
-    if res_module === nothing
-      res_module = eval(Meta.parse("module $name using JavaCall end"))
-    end
-    return res_module
 end
-
 
 function importJavaLib(javaLib)
     lib = eval(Meta.parse("@jimport $javaLib"))
 
     module_name = "$(replace(javaLib, '.' => '_'))"
-    curr_module = getModule(module_name)
+    curr_module_static = getModule(module_name * "_static")
+    curr_module_instance = getModule(module_name * "_instance")
 
     methods = listmethods(lib)
     for method in methods
@@ -55,44 +65,39 @@ function importJavaLib(javaLib)
             julia_param_types = join(julia_param_types, ", ") * ","
         end
 
-        method_to_parse = "function $method_name($julia_variables_with_types) jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables) end"
-        Base.eval(curr_module, Meta.parse(method_to_parse))
+        method_to_parse = ""
+        if isPrimitive(java_return_type)
+            method_to_parse = "function $method_name($julia_variables_with_types) jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables) end"
+        else
+            method_to_parse = "function $method_name($julia_variables_with_types) JavaValue(jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), $curr_module_instance) end"
+        end
+        Base.eval(curr_module_static, Meta.parse(method_to_parse))
+
+        instance_method = ""
+        if isPrimitive(java_return_type)
+            instance_method = "$method_name = (instance) -> ($julia_variables_with_types) -> jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)"
+        else
+            instance_method = "$method_name = (instance) -> ($julia_variables_with_types) -> JavaValue(jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), $curr_module_instance)"
+        end
+        Base.eval(curr_module_instance, Meta.parse(instance_method))
     end
     
-    return eval(Meta.parse(module_name))
+    curr_module_static
 end
 
-Math = importJavaLib("java.lang.Math")
-Math.min(1, 2)
-Math.min(1.3, 1.2)
+# Math = importJavaLib("java.lang.Math")
+# Math.min(1, 2)
+# Math.min(1.3, 1.2)
 
 Datetime = importJavaLib("java.time.LocalDate")
-# Datetime.now()
-# Datetime.plusDays(Datetime.now(), 5)
-
-# plus_days(datetime, days) = jcall(datetime,"plusDays", jtLD, (jlong,), days)
-# plus_days(Datetime.now(), 4)
-
-# Datetime.metodo(x, y)
-
-jtLD = @jimport java.time.LocalDate
-
-# plusDays = (instance) -> (weeks)  -> jcall(instance,"plusDays", jtLD, (jlong,), weeks)
-# Base.getproperty(jv::JavaObject{Symbol("java.time.LocalDate")}, sym::Symbol) = 
-#     Dict(
-#       :plusDays=> (jtld) ->(days) ->JavaValue(jcall(jtld,"plusDays", jtLD, (jlong,), days),jtLDMethods)
-#     )[sym](jv)
-
-# Base.getproperty(jv::JavaObject{Symbol("java.time.LocalDate")}, sym::Symbol) = Base.getproperty(jv::JavaObject{Symbol("java.time.LocalDate")}, sym::Symbol)
-
-# a = Datetime.now()
-# a.plus_days(4)
+dt = Datetime.now().plusDays(4).plusMonths(4)
 
 # TODOs:
-# -[ ] Add instance methods
+# -[x] Add instance methods
 # -[ ] Only declare static methods in module, if we can
 # -[x] Only generate module if module hasn't been imported
 # -[ ] Methods with arrays???
 # -[x] Typify method arguments?
+# -[ ] Import modules as needed, for example: Datetime.now().getMonth() returns a Month
 
 # Para saber os métodos dum módulo: names(Math, all=true)
