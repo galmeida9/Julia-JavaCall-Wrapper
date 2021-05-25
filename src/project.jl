@@ -1,5 +1,5 @@
 using JavaCall
-# JavaCall.init(["-Xmx128M"])
+JavaCall.init(["-Xmx128M"])
 
 # Convert Java Objects to String with toString method 
 Base.show(io::IO, obj::JavaObject) = print(io, jcall(obj,"toString", JString, ()))
@@ -24,6 +24,7 @@ function importJavaLib(javaLib)
 
     # Define module
     methods_to_parse = Set()
+    # TODO: Generate module only if it is the first time imported
     module_name = "$(replace(javaLib, '.' => '_'))$(rand(1:typemax(Int)))"
     curr_module = eval(Meta.parse("module $module_name using JavaCall end"))
 
@@ -44,26 +45,30 @@ function importJavaLib(javaLib)
 
         method_to_parse = "function $method_name($variables) jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables) end"
         Base.eval(curr_module, Meta.parse(method_to_parse))
-        push!(methods_to_parse, "$method_name=$module_name.$method_name")
     end
     
-    to_parse = '(' * join(methods_to_parse, ", ") * ", )"
-    return eval(Meta.parse(to_parse))
+    return eval(Meta.parse(module_name))
 end
-
-# TODO: What about instance methods?!?!?
 
 Math = importJavaLib("java.lang.Math")
 Math.ulp(1.2)
 
 Datetime = importJavaLib("java.time.LocalDate")
 Datetime.now()
-Datetime.plusDays(Datetime.now(), 5)
+# Datetime.plusDays(Datetime.now(), 5)
 
-plus_days(datetime, days) = jcall(datetime,"plusDays", jtLD, (jlong,), days)
-plus_days(Datetime.now(), 4)
+# plus_days(datetime, days) = jcall(datetime,"plusDays", jtLD, (jlong,), days)
+# plus_days(Datetime.now(), 4)
 
-Datetime.metodo(x, y)
+# Datetime.metodo(x, y)
 
-a = Datetime.now()
-a.plus_days(4)
+# a = Datetime.now()
+# a.plus_days(4)
+
+# TODOs:
+# -[ ] Add instance methods
+# -[ ] Only declare static methods in module, if we can
+# -[ ] Only generate module if module hasn't been imported
+# -[ ] Methods with arrays???
+
+# Para saber os métodos dum módulo: names(Math, all=true)
