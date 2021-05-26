@@ -5,7 +5,6 @@ JavaCall.init(["-Xmx128M"])
 include("project_struct.jl")
 using Main.project_struct
 
-
 # Convert Java Objects to String with toString method 
 Base.show(io::IO, obj::JavaObject) = print(io, jcall(obj,"toString", JString, ()))
 Base.show(io::IO, obj::JavaValue) = print(io, jcall(getfield(obj, :ref),"toString", JString, ()))
@@ -40,6 +39,14 @@ function getModule(name)
         end
 end
 
+isStatic(meth::JConstructor) = false
+function isStatic(meth::Union{JMethod,JField})
+    modifiers = JavaObject{Symbol("java.lang.reflect.Modifier")}
+
+    mods = jcall(meth, "getModifiers", jint, ())
+    jcall(modifiers, "isStatic", jboolean, (jint,), mods) != 0
+end
+
 function importJavaLib(javaLib)
     lib = eval(Meta.parse("@jimport $javaLib"))
 
@@ -47,7 +54,7 @@ function importJavaLib(javaLib)
     curr_module_static = getModule(module_name * "_static")
     curr_module_instance = getModule(module_name * "_instance")
 
-    methods = listmethods(lib, "put")
+    methods = listmethods(lib)
     for method in methods
         method_name = getname(method)
         java_return_type = getname(getreturntype(method))
@@ -59,7 +66,8 @@ function importJavaLib(javaLib)
         julia_param_types = ""
         julia_variables_with_types = variables
         if (length(java_param_types) != 0)
-            variables = join(map( type -> "convert(JObject, x$(type[1]))", enumerate(java_param_types)), ", ") * ","
+            # variables = join(map( type -> "convert(JObject, x$(type[1]))", enumerate(java_param_types)), ", ") * ","
+            variables = join(map( type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
             julia_param_types = map(type -> getTypeFromJava(getname(type)), java_param_types)
             # TODO: Remove the type from argument when the java type is Object
             # FIXME: GABI NÃO FAÇAS ISTO AINDA, HÁ O JPROXIES QUE SE CALHAR RESOLVE ISTO
@@ -69,16 +77,17 @@ function importJavaLib(javaLib)
         end
 
         method_to_parse = ""
-        if isPrimitive(java_return_type)
+        if isStatic(method) && isPrimitive(java_return_type)
             method_to_parse = "function $method_name($julia_variables_with_types) jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables) end"
         else
             method_to_parse = "function $method_name($julia_variables_with_types) JavaValue(jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), $curr_module_instance) end"
         end
         println(method_to_parse)
+        println(isStatic(method))
         Base.eval(curr_module_static, Meta.parse(method_to_parse))
 
         instance_method = ""
-        if isPrimitive(java_return_type)
+        if isStatic(method)  && isPrimitive(java_return_type)
             instance_method = "$method_name = (instance) -> ($julia_variables_with_types) -> jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)"
         else
             instance_method = "$method_name = (instance) -> ($julia_variables_with_types) -> JavaValue(jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), $curr_module_instance)"
@@ -97,10 +106,10 @@ end
 # Math.min(1, 2)
 # Math.min(1.3, 1.2)
 
-# Datetime = importJavaLib("java.time.LocalDate")
-# dt = Datetime.now().plusDays(4).plusMonths(4)
+Datetime = importJavaLib("java.time.LocalDate")
+dt = Datetime.now().plusDays(4).plusMonths(4)
 
-HashMap = importJavaLib("java.util.HashMap")
+# HashMap = importJavaLib("java.util.HashMap")
 
 # TODOs:
 # -[x] Add instance methods
