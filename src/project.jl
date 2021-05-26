@@ -47,7 +47,7 @@ function importJavaLib(javaLib)
     curr_module_static = getModule(module_name * "_static")
     curr_module_instance = getModule(module_name * "_instance")
 
-    methods = listmethods(lib)
+    methods = listmethods(lib, "put")
     for method in methods
         method_name = getname(method)
         java_return_type = getname(getreturntype(method))
@@ -59,9 +59,12 @@ function importJavaLib(javaLib)
         julia_param_types = ""
         julia_variables_with_types = variables
         if (length(java_param_types) != 0)
-            variables = join(map( type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
+            variables = join(map( type -> "convert(JObject, x$(type[1]))", enumerate(java_param_types)), ", ") * ","
             julia_param_types = map(type -> getTypeFromJava(getname(type)), java_param_types)
+            # TODO: Remove the type from argument when the java type is Object
+            # FIXME: GABI NÃO FAÇAS ISTO AINDA, HÁ O JPROXIES QUE SE CALHAR RESOLVE ISTO
             julia_variables_with_types = join(map( type -> "x$(type[1])::$(julia_param_types[type[1]])", enumerate(java_param_types)), ", ") * ","
+            # julia_variables_with_types = join(map( type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
             julia_param_types = join(julia_param_types, ", ") * ","
         end
 
@@ -71,6 +74,7 @@ function importJavaLib(javaLib)
         else
             method_to_parse = "function $method_name($julia_variables_with_types) JavaValue(jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), $curr_module_instance) end"
         end
+        println(method_to_parse)
         Base.eval(curr_module_static, Meta.parse(method_to_parse))
 
         instance_method = ""
@@ -82,6 +86,10 @@ function importJavaLib(javaLib)
         Base.eval(curr_module_instance, Meta.parse(instance_method))
     end
     
+    # Add empty constructor
+    method_to_parse = "function new() JavaValue(($lib)(), $curr_module_instance) end"
+    Base.eval(curr_module_static, Meta.parse(method_to_parse))
+
     curr_module_static
 end
 
@@ -89,8 +97,10 @@ end
 # Math.min(1, 2)
 # Math.min(1.3, 1.2)
 
-Datetime = importJavaLib("java.time.LocalDate")
-dt = Datetime.now().plusDays(4).plusMonths(4)
+# Datetime = importJavaLib("java.time.LocalDate")
+# dt = Datetime.now().plusDays(4).plusMonths(4)
+
+HashMap = importJavaLib("java.util.HashMap")
 
 # TODOs:
 # -[x] Add instance methods
@@ -99,5 +109,6 @@ dt = Datetime.now().plusDays(4).plusMonths(4)
 # -[ ] Methods with arrays???
 # -[x] Typify method arguments?
 # -[ ] Import modules as needed, for example: Datetime.now().getMonth() returns a Month
+# -[ ] Create new instance of objects
 
 # Para saber os métodos dum módulo: names(Math, all=true)
