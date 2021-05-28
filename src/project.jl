@@ -1,19 +1,21 @@
 module project_struct
     using JavaCall
+
     struct JavaValue
         ref::JavaObject
         methods::Module
     end
+
     Base.show(io::IO, obj::JavaValue) = print(io, jcall(getfield(obj, :ref),"toString", JString, ()))
     Base.getproperty(jv::JavaValue, sym::Symbol) = getfield(getfield(jv, :methods), sym)(getfield(jv, :ref))
+
     export JavaValue
 end
 
 module project
-    # TODO: Improve naming of include
 
     # IMPORTS #
-    # include("project_struct.jl")
+    # TODO: Improve naming of project_struct
     using JavaCall, Main.project_struct
     
     # Initialize JVM if needed
@@ -48,8 +50,6 @@ module project
     end
 
     function isJavaObject(javaType)
-        println(javaType)
-        println(getname(javaType))
         return occursin("java.lang.Object", getname(javaType))
     end
 
@@ -57,7 +57,6 @@ module project
     # and the second element is the actual module
     function getModule(name)
             try
-                Base.eval(Main, Meta.parse("@which $name"))
                 [false, Base.eval(Main, Meta.parse("$name"))]
             catch _
                 [
@@ -144,41 +143,36 @@ module project
             end
         end
         
-        # Add empty constructor
-        # TODO: Add all the constructors
-        method_to_parse = "function new() JavaValue(($lib)(), $curr_module_instance) end"
-        Base.eval(curr_module_static, Meta.parse(method_to_parse))
+        # Add all the constructors
+        if (javaLib != "java.lang.Class")
+            cls = classforname(javaLib)
+            constructors = jcall(cls, "getConstructors", Vector{JConstructor}, ())
+
+            for constructor in constructors
+                java_param_types = getparametertypes(constructor)
+                
+                variables = ""
+                julia_param_types = ""
+                julia_variables_with_types = variables
+                if (length(java_param_types) != 0)
+                    variables = join(map( type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
+                    julia_param_types = map(type -> getTypeFromJava(getname(type)), java_param_types)
+                    julia_variables_with_types = join(map( type -> "x$(type[1])::$(julia_param_types[type[1]])", enumerate(java_param_types)), ", ") * ","
+                    julia_param_types = join(julia_param_types, ", ") * ","
+                end
+
+                method_to_parse = "function new($julia_variables_with_types)
+                                        JavaValue(($lib)(($julia_param_types), $variables), $curr_module_instance)
+                                    end"
+                Base.eval(curr_module_static, Meta.parse(method_to_parse))
+            end
+        end
 
         curr_module_static
     end
 
     export getInstanceModule, importJavaLib
 end
-
-# Math = importJavaLib("java.lang.Math")
-# Math.min(1, 2)
-# Math.min(1.3, 1.2)
-
-# Datetime = importJavaLib("java.time.LocalDate")
-# dt = Datetime.now().plusDays(4).plusMonths(4)
-
-# HashMap = importJavaLib("java.util.HashMap")
-# jmap = HashMap.new()
-# #@new HashMap()
-
-# Arrays = importJavaLib("java.util.Arrays")
-# Arrays.copyOf([1,2,3], Int32(10))
-
-# gurl = jnu((JString,), "http://www.google.com")
-# lib((tuple with types,), variables)
-
-# h = HashMap.new() -> HashMap
-# h.getClass() -> Class (h.getClass(), Class_module)
-# a.getDeclaredMethods()
-
-
-# m = Datetime.now().getMonth() -> Month (m, module_Month) typeof(m) -> JavaObject{java.time.Month}
-# m.getDayOfMonth()
 
 # TODOs:
 # -[X] Add instance methods
@@ -189,9 +183,9 @@ end
 # -[X] Typify method arguments?
 # -[ ] Allow JObject methods to use JString i.e.
 # -[X] Import modules as needed, for example: Datetime.now().getMonth() returns a Month
-# -[ ] Get all constructors
+# -[X] Get all constructors
 # -[ ] Convert jboolean to Bool
-# -[ ] getfields ao importar
+# -[ ] getfields ao importar (class constants)
 # -[X] include path issue
 
 # function JFieldInfo(field::JField)
