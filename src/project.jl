@@ -39,6 +39,7 @@ module project
             return "j" * javaType
         elseif occursin("[]", javaType)
             reference_type = getTypeFromJava(javaType[begin:end-2])
+            # FIXME: Does the vector have JavaValues???
             return "Vector{$reference_type}"
         else 
             return "JavaObject{Symbol(\"$(javaType)\")}"
@@ -61,9 +62,12 @@ module project
             catch _
                 [
                     true,
-                    Base.eval(Main, Meta.parse("module $name
-                                using Main.project_struct, Main.project, JavaCall
-                                end"))
+                    Base.eval(
+                      Main,
+                      Meta.parse("module $name
+                                    using Main.project_struct, Main.project, JavaCall
+                                  end")
+                    )
                 ]
             end
     end
@@ -168,6 +172,36 @@ module project
             end
         end
 
+        # Add all constants/fields
+        if (javaLib != "java.lang.Class")
+          cls = classforname(javaLib)
+          fields = jcall(cls, "getFields", Vector{JField}, ())
+
+          for (index, field) in enumerate(fields)
+            field_name = getname(field)
+            java_field_type = getname(jcall(field, "getType", JClass))
+
+            if isPrimitive(java_field_type)
+              field_to_parse = "$field_name = $(field(lib))"
+              Base.eval(curr_module_static, Meta.parse(field_to_parse))
+            else
+              # TODO: Improve getting the fields without calling JavaCall and getting always an array
+              field_to_parse =
+                "$field_name = 
+                  (function() 
+                    JavaValue(
+                      (function()
+                        cls = classforname(\"$javaLib\")
+                        jcall(cls, \"getFields\", Vector{JField})[$index]($lib)
+                      end)(),
+                      getInstanceModule(\"$java_field_type\")
+                    )
+                  end)()"
+              Base.eval(curr_module_static, Meta.parse(field_to_parse))
+            end
+          end
+        end
+
         curr_module_static
     end
 
@@ -185,8 +219,14 @@ end
 # -[X] Import modules as needed, for example: Datetime.now().getMonth() returns a Month
 # -[X] Get all constructors
 # -[ ] Convert jboolean to Bool
-# -[ ] getfields ao importar (class constants)
+# -[X] getfields ao importar (class constants)
 # -[X] include path issue
+# -[ ] What about Arrays of LocalDates?
+# -[ ] When calling a method, transform the JavaValue to its reference (i.e.: Datetime.of(Int32(2021), Month.FEBRUARY, Int32(28)) does not work, but
+#   this Datetime.of(Int32(2021), getfield(Month.FEBRUARY, :ref), Int32(28)) works), Union{JavaValue, JObject} ?
+
+# TODOs bacanos não obrigatórios:
+# -[ ] Apanhar as exceções, try catch + print(exception.getMessage())
 
 # function JFieldInfo(field::JField)
 #     fcl = jcall(field, "getType", JClass, ())
@@ -197,5 +237,10 @@ end
 #     info = get(typeInfo, legalClassName(fcl), genericFieldInfo)
 #     JFieldInfo{info.convertType}(field, info, static, id, cls)
 # end
+
+# Para obter o valor do field (i.e.: Math.PI)
+# math_class = classforname("java.lang.Math")
+# field_pi = jcall(math_class, "getFields", Vector{JField}, ())[2]
+# field_pi(math_lib)
 
 # Para saber os métodos dum módulo: names(Math, all=true)
