@@ -1,12 +1,12 @@
 module project_struct
     using JavaCall
 
-    struct JavaValue
-        ref::JavaObject
+    struct JavaValue{T<:JavaObject}
+        ref::T
         methods::Module
     end
 
-    Base.show(io::IO, obj::JavaValue) = print(io, jcall(getfield(obj, :ref),"toString", JString, ()))
+    Base.show(io::IO, obj::JavaValue) = print(io, jcall(getfield(obj, :ref), "toString", JString, ()))
     Base.getproperty(jv::JavaValue, sym::Symbol) = getfield(getfield(jv, :methods), sym)(getfield(jv, :ref))
 
     export JavaValue
@@ -28,9 +28,9 @@ module project
     const global MODULE_INSTANCE_NAME = "_instance"
 
     # Convert Java Objects to String with toString method 
-    Base.show(io::IO, obj::JavaObject) = print(io, jcall(obj,"toString", JString, ()))
+    Base.show(io::IO, obj::JavaObject) = print(io, jcall(obj, "toString", JString, ()))
 
-    function getTypeFromJava(javaType)
+    function getTypeFromJava(javaType, is_not_julia_parameter=true)
         primitiveTypes = ["boolean", "char", "int", "long", "float", "double"]
 
         if javaType == "void"
@@ -38,11 +38,10 @@ module project
         elseif javaType in primitiveTypes
             return "j" * javaType
         elseif occursin("[]", javaType)
-            reference_type = getTypeFromJava(javaType[begin:end-2])
-            # FIXME: Does the vector have JavaValues???
+            reference_type = getTypeFromJava(javaType[begin:end - 2], is_not_julia_parameter)
             return "Vector{$reference_type}"
         else 
-            return "JavaObject{Symbol(\"$(javaType)\")}"
+            return is_not_julia_parameter ? "JavaObject{Symbol(\"$(javaType)\")}" : "JavaValue{JavaObject{Symbol(\"$(javaType)\")}}"
         end
     end
 
@@ -57,19 +56,19 @@ module project
     # Returns an array, where the first element is a boolean representing if a module is new
     # and the second element is the actual module
     function getModule(name)
-            try
-                [false, Base.eval(Main, Meta.parse("$name"))]
-            catch _
-                [
-                    true,
-                    Base.eval(
-                      Main,
-                      Meta.parse("module $name
-                                    using Main.project_struct, Main.project, JavaCall
-                                  end")
-                    )
-                ]
-            end
+        try
+            [false, Base.eval(Main, Meta.parse("$name"))]
+        catch _
+            [
+                true,
+                Base.eval(
+                    Main,
+                    Meta.parse("module $name
+                                using Main.project_struct, Main.project, JavaCall
+                                end")
+                )
+            ]
+        end
     end
 
     function isStatic(meth::JMethod)
@@ -112,23 +111,44 @@ module project
             julia_variables_with_types = variables
             if (length(java_param_types) != 0)
                 # variables = join(map( type -> isJavaObject(type[2]) ? "convert(JObject, eval(Meta.parse(getTypeFromJava(x$(type[1])))))" : "x$(type[1])", enumerate(java_param_types)), ", ") * ","
-                variables = join(map( type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
+                # variables = join(map(type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
+
+                variables = join(
+                    map(
+                        # TODO: Move to a method
+                        type -> begin
+                            if occursin("JavaValue", getTypeFromJava(getname(type[2]), false))
+                                "getfield(x$(type[1]), :ref)"
+                            else
+                                "x$(type[1])"
+                            end
+                        end,
+                        enumerate(java_param_types)
+                    )
+                    , ", "
+                ) * ","
                 julia_param_types = map(type -> getTypeFromJava(getname(type)), java_param_types)
                 # TODO: Inheritance of types to allow put(x1::Object) to use JString i.e.
-                julia_variables_with_types = join(map( type -> "x$(type[1])::$(julia_param_types[type[1]])", enumerate(java_param_types)), ", ") * ","
+                # julia_variables_with_types = join(
+                #     map(type -> "x$(type[1])::$(julia_param_types[type[1]])", enumerate(java_param_types)), ", "
+                # ) * ","
+
+                julia_variables_with_types = join(
+                    map(type -> "x$(type[1])::$( getTypeFromJava(getname(java_param_types[type[1]]), false) )", enumerate(java_param_types)), ", "
+                ) * ","
                 # julia_variables_with_types = join(map( type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
                 julia_param_types = join(julia_param_types, ", ") * ","
             end
 
-            method_to_parse = ""
             if isStatic(method)
+                method_to_parse = ""
                 if isPrimitive(java_return_type)
                     method_to_parse = "function $method_name($julia_variables_with_types) jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables) end"
                 else
                     method_to_parse = "function $method_name($julia_variables_with_types)
-                                            curr_module = getInstanceModule(\"$java_return_type\")
-                                            JavaValue(jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), curr_module) 
-                                        end"
+                                                curr_module = getInstanceModule(\"$java_return_type\")
+                                                JavaValue{$julia_return_type}(jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), curr_module) 
+                                            end"
                 end
                 Base.eval(curr_module_static, Meta.parse(method_to_parse))
             else
@@ -137,13 +157,16 @@ module project
                     instance_method = "$method_name = (instance) -> ($julia_variables_with_types) -> jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)"
                 else
                     instance_method = "$method_name = (instance) ->
-                                        function ($julia_variables_with_types)
-                                            curr_module = getInstanceModule(\"$java_return_type\")
-                                            JavaValue(jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), curr_module)
-                                        end"
-                                        # curr_module = getInstanceModule(\"$java_return_type\")
+                                            function ($julia_variables_with_types)
+                                                curr_module = getInstanceModule(\"$java_return_type\")
+                                                JavaValue{$julia_return_type}(jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), curr_module)
+                                            end"
                 end
-                Base.eval(curr_module_instance, Meta.parse(instance_method))
+                try
+                    Base.eval(curr_module_instance, Meta.parse(instance_method))
+                catch e
+                    println(e)
+                end
             end
         end
         
@@ -154,52 +177,52 @@ module project
 
             for constructor in constructors
                 java_param_types = getparametertypes(constructor)
-                
+                    
                 variables = ""
                 julia_param_types = ""
                 julia_variables_with_types = variables
                 if (length(java_param_types) != 0)
-                    variables = join(map( type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
+                    variables = join(map(type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
                     julia_param_types = map(type -> getTypeFromJava(getname(type)), java_param_types)
-                    julia_variables_with_types = join(map( type -> "x$(type[1])::$(julia_param_types[type[1]])", enumerate(java_param_types)), ", ") * ","
+                    julia_variables_with_types = join(map(type -> "x$(type[1])::$(julia_param_types[type[1]])", enumerate(java_param_types)), ", ") * ","
                     julia_param_types = join(julia_param_types, ", ") * ","
                 end
 
                 method_to_parse = "function new($julia_variables_with_types)
-                                        JavaValue(($lib)(($julia_param_types), $variables), $curr_module_instance)
-                                    end"
+                                            JavaValue(($lib)(($julia_param_types), $variables), $curr_module_instance)
+                                        end"
                 Base.eval(curr_module_static, Meta.parse(method_to_parse))
             end
         end
 
-        # Add all constants/fields
+            # Add all constants/fields
         if (javaLib != "java.lang.Class")
-          cls = classforname(javaLib)
-          fields = jcall(cls, "getFields", Vector{JField}, ())
+            cls = classforname(javaLib)
+            fields = jcall(cls, "getFields", Vector{JField}, ())
 
-          for (index, field) in enumerate(fields)
-            field_name = getname(field)
-            java_field_type = getname(jcall(field, "getType", JClass))
+            for (index, field) in enumerate(fields)
+                field_name = getname(field)
+                java_field_type = getname(jcall(field, "getType", JClass))
 
-            if isPrimitive(java_field_type)
-              field_to_parse = "$field_name = $(field(lib))"
-              Base.eval(curr_module_static, Meta.parse(field_to_parse))
-            else
-              # TODO: Improve getting the fields without calling JavaCall and getting always an array
-              field_to_parse =
-                "$field_name = 
-                  (function() 
-                    JavaValue(
-                      (function()
-                        cls = classforname(\"$javaLib\")
-                        jcall(cls, \"getFields\", Vector{JField})[$index]($lib)
-                      end)(),
-                      getInstanceModule(\"$java_field_type\")
-                    )
-                  end)()"
-              Base.eval(curr_module_static, Meta.parse(field_to_parse))
+                if isPrimitive(java_field_type)
+                    field_to_parse = "$field_name = $(field(lib))"
+                    Base.eval(curr_module_static, Meta.parse(field_to_parse))
+                else
+                # TODO: Improve getting the fields without calling JavaCall and getting always an array
+                    field_to_parse =
+                    "$field_name = 
+                    (function() 
+                        JavaValue(
+                        (function()
+                            cls = classforname(\"$javaLib\")
+                            jcall(cls, \"getFields\", Vector{JField})[$index]($lib)
+                        end)(),
+                        getInstanceModule(\"$java_field_type\")
+                        )
+                    end)()"
+                    Base.eval(curr_module_static, Meta.parse(field_to_parse))
+                end
             end
-          end
         end
 
         curr_module_static
@@ -207,26 +230,6 @@ module project
 
     export getInstanceModule, importJavaLib
 end
-
-# TODOs:
-# -[X] Add instance methods
-# -[X] Only declare static methods in module, if we can
-# -[X] Only generate module if module hasn't been imported
-# -[X] Do not reimport a module
-# -[X] Methods with arrays???
-# -[X] Typify method arguments?
-# -[ ] Allow JObject methods to use JString i.e.
-# -[X] Import modules as needed, for example: Datetime.now().getMonth() returns a Month
-# -[X] Get all constructors
-# -[ ] Convert jboolean to Bool
-# -[X] getfields ao importar (class constants)
-# -[X] include path issue
-# -[ ] What about Arrays of LocalDates?
-# -[ ] When calling a method, transform the JavaValue to its reference (i.e.: Datetime.of(Int32(2021), Month.FEBRUARY, Int32(28)) does not work, but
-#   this Datetime.of(Int32(2021), getfield(Month.FEBRUARY, :ref), Int32(28)) works), Union{JavaValue, JObject} ?
-
-# TODOs bacanos não obrigatórios:
-# -[ ] Apanhar as exceções, try catch + print(exception.getMessage())
 
 # function JFieldInfo(field::JField)
 #     fcl = jcall(field, "getType", JClass, ())
@@ -244,3 +247,8 @@ end
 # field_pi(math_lib)
 
 # Para saber os métodos dum módulo: names(Math, all=true)
+
+
+# a = Module.get_array() => HashMap[]
+# Vector{JavaObject{HashMap}}
+# a[0].put(...)
