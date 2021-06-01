@@ -182,6 +182,66 @@ module project
             end"
     end
 
+    function addConstantsAndFields(javaLib, lib, curr_module_static)
+        cls = classforname(javaLib)
+        fields = jcall(cls, "getFields", Vector{JField}, ())
+
+        for (index, field) in enumerate(fields)
+            field_name = getname(field)
+            java_field_type = getname(jcall(field, "getType", JClass))
+
+            if isPrimitive(java_field_type)
+                field_to_parse = "$field_name = $(field(lib))"
+                Base.eval(curr_module_static, Meta.parse(field_to_parse))
+            else
+            # TODO: Improve getting the fields without calling JavaCall and getting always an array
+                field_to_parse =
+                "$field_name = 
+                (function() 
+                    JavaValue(
+                    (function()
+                        cls = classforname(\"$javaLib\")
+                        jcall(cls, \"getFields\", Vector{JField})[$index]($lib)
+                    end)(),
+                    getInstanceModule(\"$java_field_type\")
+                    )
+                end)()"
+                Base.eval(curr_module_static, Meta.parse(field_to_parse))
+            end
+        end
+    end
+
+    function addConstructors(javaLib, lib, curr_module_static, curr_module_instance)
+        cls = classforname(javaLib)
+        constructors = jcall(cls, "getConstructors", Vector{JConstructor}, ())
+
+        for constructor in constructors
+            java_param_types = getparametertypes(constructor)
+                
+            variables = ""
+            julia_param_types = ""
+            julia_variables_with_types = "()"
+            if (length(java_param_types) != 0)
+                variables = getVariablesForFunction(java_param_types)
+                julia_variables_with_types, _ = getJuliaVariablesWithTypes(java_param_types)
+                julia_param_types = getJuliaParamTypesForFunction(java_param_types)
+            end
+
+            return_type = getTypeFromJava(javaLib, false)
+            method_to_parse = ""
+            if return_type == "String"
+                method_to_parse = "function new$julia_variables_with_types
+                                        JavaValue(JString(($lib)(($julia_param_types), $variables)), $curr_module_instance)
+                                    end"
+            else occursin("JavaValue", return_type)
+                method_to_parse = "function new$julia_variables_with_types
+                                        JavaValue(($lib)(($julia_param_types), $variables), $curr_module_instance)
+                                    end"
+            end
+            Base.eval(curr_module_static, Meta.parse(method_to_parse))
+        end
+    end
+
     function importJavaLib(javaLib)
         lib = eval(Meta.parse("@jimport $javaLib"))
 
@@ -239,66 +299,9 @@ module project
             end
         end
         
-        # Add all the constructors
         if (javaLib != "java.lang.Class")
-            cls = classforname(javaLib)
-            constructors = jcall(cls, "getConstructors", Vector{JConstructor}, ())
-
-            for constructor in constructors
-                java_param_types = getparametertypes(constructor)
-                    
-                variables = ""
-                julia_param_types = ""
-                julia_variables_with_types = "()"
-                if (length(java_param_types) != 0)
-                    variables = getVariablesForFunction(java_param_types)
-                    julia_variables_with_types, _ = getJuliaVariablesWithTypes(java_param_types)
-                    julia_param_types = getJuliaParamTypesForFunction(java_param_types)
-                end
-
-                return_type = getTypeFromJava(javaLib, false)
-                method_to_parse = ""
-                if return_type == "String"
-                    method_to_parse = "function new$julia_variables_with_types
-                                            JavaValue(JString(($lib)(($julia_param_types), $variables)), $curr_module_instance)
-                                        end"
-                else occursin("JavaValue", return_type)
-                    method_to_parse = "function new$julia_variables_with_types
-                                            JavaValue(($lib)(($julia_param_types), $variables), $curr_module_instance)
-                                        end"
-                end
-                Base.eval(curr_module_static, Meta.parse(method_to_parse))
-            end
-        end
-
-        # Add all constants/fields
-        if (javaLib != "java.lang.Class")
-            cls = classforname(javaLib)
-            fields = jcall(cls, "getFields", Vector{JField}, ())
-
-            for (index, field) in enumerate(fields)
-                field_name = getname(field)
-                java_field_type = getname(jcall(field, "getType", JClass))
-
-                if isPrimitive(java_field_type)
-                    field_to_parse = "$field_name = $(field(lib))"
-                    Base.eval(curr_module_static, Meta.parse(field_to_parse))
-                else
-                # TODO: Improve getting the fields without calling JavaCall and getting always an array
-                    field_to_parse =
-                    "$field_name = 
-                    (function() 
-                        JavaValue(
-                        (function()
-                            cls = classforname(\"$javaLib\")
-                            jcall(cls, \"getFields\", Vector{JField})[$index]($lib)
-                        end)(),
-                        getInstanceModule(\"$java_field_type\")
-                        )
-                    end)()"
-                    Base.eval(curr_module_static, Meta.parse(field_to_parse))
-                end
-            end
+            addConstructors(javaLib, lib, curr_module_static, curr_module_instance)
+            addConstantsAndFields(javaLib, lib, curr_module_static)
         end
 
         curr_module_static
