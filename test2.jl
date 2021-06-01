@@ -30,6 +30,14 @@ StringMod.new("123").concat("123").toString()
 # field_january(month_lib)
 
 ### é isto crl
-function test(x::JavaValue{T}) where {T<:JavaObject}
-  println(x)
+function test(x1::JavaValue{T1}, x2::JavaValue{JavaObject{Symbol("java.lang.String")}}, x3::JavaValue{T3}) where {T1<:JavaObject, T3<:JavaObject}
+  println(x1)
+  println(x2)
+  println(x3)
+  # jcall( ..., JObject, ...)
 end
+
+a = StringMod.new("123") # => JavaValue{JString}
+b = StringMod.new("123")
+c = StringMod.new("123")
+test(a, b, c)

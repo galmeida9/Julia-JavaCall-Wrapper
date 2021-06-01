@@ -16,10 +16,11 @@ TODOs:
 - [X] When calling a method, transform the JavaValue to its reference (i.e.: Datetime.of(Int32(2021), Month.FEBRUARY, Int32(28)) does not work, but
   this Datetime.of(Int32(2021), getfield(Month.FEBRUARY, :ref), Int32(28)) works)
 - [ ] Duplicate the methods that can receive a JObject to allow them
-- [ ] Duplicate the methods that can receive a JString to allow either a String or a JavaValue of String
+- [ ] Duplicate the methods that can receive a JString to allow either a String or a JavaValue{JString}
 
 TODOs bacanos não obrigatórios:
 - [ ] Apanhar as exceções, try catch + print(exception.getMessage())
 - [ ] Criar? methods para mostrar os métodos da instância ou da classe?
 
 StringModule = importJavaLib("java.lang.String") manda ERROR: LoadError: UndefVarError: Lookup not defined
+
