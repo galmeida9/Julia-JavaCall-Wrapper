@@ -35,6 +35,7 @@ module project
 
         if javaType == "void"
             return "Nothing"
+        # FIXME: Not this prevents JavaValue of Strings...
         elseif javaType == "java.lang.String" && !is_not_julia_parameter
             return "String"
         elseif javaType in primitiveTypes
