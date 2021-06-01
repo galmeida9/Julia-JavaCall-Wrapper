@@ -35,6 +35,8 @@ module project
 
         if javaType == "void"
             return "Nothing"
+        elseif javaType == "java.lang.String" && !is_not_julia_parameter
+            return "String"
         elseif javaType in primitiveTypes
             return "j" * javaType
         elseif occursin("[]", javaType)
@@ -116,8 +118,13 @@ module project
                 variables = join(
                     map(
                         # TODO: Move to a method
+                        # [Datetime.now()]
                         type -> begin
-                            if occursin("JavaValue", getTypeFromJava(getname(type[2]), false))
+                            name_type = getTypeFromJava(getname(type[2]), false)
+                            # Vector{JavaValue} -> :), Vector{Vector{JavaValue}} -> :(
+                            if occursin("Vector", name_type) && occursin("JavaValue", name_type)
+                                "map(el -> getfield(el, :ref), x$(type[1]))"
+                            elseif occursin("JavaValue", name_type)
                                 "getfield(x$(type[1]), :ref)"
                             else
                                 "x$(type[1])"
@@ -183,14 +190,27 @@ module project
                 julia_variables_with_types = variables
                 if (length(java_param_types) != 0)
                     variables = join(map(type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
+                    # julia_param_types = map(type -> getTypeFromJava(getname(type), false), java_param_types)
+                    # julia_variables_with_types = join(map(type -> "x$(type[1])::$(julia_param_types[type[1]])", enumerate(java_param_types)), ", ") * ","
+
+                    julia_variables_with_types = join(map(type -> "x$(type[1])::$(getTypeFromJava(getname(type[2]), false))", enumerate(java_param_types)), ", ") * ","
+                    
+                    
                     julia_param_types = map(type -> getTypeFromJava(getname(type)), java_param_types)
-                    julia_variables_with_types = join(map(type -> "x$(type[1])::$(julia_param_types[type[1]])", enumerate(java_param_types)), ", ") * ","
                     julia_param_types = join(julia_param_types, ", ") * ","
                 end
 
-                method_to_parse = "function new($julia_variables_with_types)
+                return_type = getTypeFromJava(javaLib, false)
+                method_to_parse = ""
+                if return_type == "String"
+                    method_to_parse = "function new($julia_variables_with_types)
+                                            JavaValue(JString(($lib)(($julia_param_types), $variables)), $curr_module_instance)
+                                        end"
+                else occursin("JavaValue", return_type)
+                    method_to_parse = "function new($julia_variables_with_types)
                                             JavaValue(($lib)(($julia_param_types), $variables), $curr_module_instance)
                                         end"
+                end
                 Base.eval(curr_module_static, Meta.parse(method_to_parse))
             end
         end
@@ -228,7 +248,7 @@ module project
         curr_module_static
     end
 
-    export getInstanceModule, importJavaLib
+    export getInstanceModule, importJavaLib, JavaValue # FIXME: Remove JavaValue?
 end
 
 # function JFieldInfo(field::JField)
