@@ -9,6 +9,7 @@ Math.min(1.3, 1.2)
 Datetime = importJavaLib("java.time.LocalDate")
 Month = importJavaLib("java.time.Month")
 month = Datetime.now().plusDays(4).plusMonths(4).getMonth().getValue()
+Datetime.of(Int32(2021), Month.JANUARY, Int32(2))
 
 HashMap = importJavaLib("java.util.HashMap")
 jmap = HashMap.new(Int32(10), Float32(1.0))
@@ -16,28 +17,16 @@ jmap = HashMap.new(Int32(10), Float32(1.0))
 
 HashSet = importJavaLib("java.util.HashSet")
 set = HashSet.new()
+set.add(Datetime.now())
 
 Arrays = importJavaLib("java.util.Arrays")
 Arrays.copyOf([1,2,3], Int32(10))
 # Arrays.copyOf([Datetime.now()]) -> Not working, needs inheritance from Object
 
-StringMod = importJavaLib("java.lang.String")
-StringMod.new("123").concat("123").toString()
+String = importJavaLib("java.lang.String")
+String.new("123").concat("123").toString()
 
 # month_lib = @jimport "java.time.Month"
 # month_class = classforname("java.time.Month")
 # field_january = jcall(month_class, "getFields", Vector{JField}, ())[1]
 # field_january(month_lib)
-
-### é isto crl
-function test(x1::JavaValue{T1}, x2::JavaValue{JavaObject{Symbol("java.lang.String")}}, x3::JavaValue{T3}) where {T1<:JavaObject, T3<:JavaObject}
-  println(x1)
-  println(x2)
-  println(x3)
-  # jcall( ..., JObject, ...)
-end
-
-a = StringMod.new("123") # => JavaValue{JString}
-b = StringMod.new("123")
-c = StringMod.new("123")
-test(a, b, c)
