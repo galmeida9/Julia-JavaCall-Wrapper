@@ -29,15 +29,20 @@ module project
 
     # Convert Java Objects to String with toString method 
     Base.show(io::IO, obj::JavaObject) = print(io, jcall(obj, "toString", JString, ()))
+    Base.show(io::IO, obj::jboolean) = print(io, Bool(obj))
 
     function getTypeFromJava(javaType, is_not_julia_parameter=true)
-        primitiveTypes = ["boolean", "char", "int", "long", "float", "double"]
+        primitiveTypes = ["char", "int", "long", "float", "double"]
 
         if javaType == "void"
             "Nothing"
         # FIXME: Now this prevents JavaValue of Strings...
         elseif javaType == "java.lang.String" && !is_not_julia_parameter
             "String"
+        elseif javaType == "boolean" && !is_not_julia_parameter
+            "Bool"
+        elseif javaType == "boolean" && is_not_julia_parameter
+            "UInt8"
         elseif javaType in primitiveTypes
             "j" * javaType
         elseif occursin("[]", javaType)

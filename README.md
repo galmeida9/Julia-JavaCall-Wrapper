@@ -10,7 +10,7 @@ TODOs:
 - [X] Get all constructors
 - [X] getfields ao importar (class constants)
 - [X] include path issue
-- [ ] Convert jboolean to Bool
+- [X] Convert jboolean to Bool
 - [X] Allow direct conversion from String to JString i.e. JString("hello")
 - [ ] What about Arrays of anything?
 - [X] When calling a method, transform the JavaValue to its reference (i.e.: Datetime.of(Int32(2021), Month.FEBRUARY, Int32(28)) does not work, but

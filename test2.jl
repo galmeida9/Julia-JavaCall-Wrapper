@@ -26,6 +26,9 @@ Arrays.copyOf([1,2,3], Int32(10))
 String = importJavaLib("java.lang.String")
 String.new("123").concat("123").toString()
 
+Boolean = importJavaLib("java.lang.Boolean")
+Boolean.new(true)
+
 # month_lib = @jimport "java.time.Month"
 # month_class = classforname("java.time.Month")
 # field_january = jcall(month_class, "getFields", Vector{JField}, ())[1]
