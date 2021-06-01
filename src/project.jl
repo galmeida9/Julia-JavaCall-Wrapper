@@ -34,26 +34,28 @@ module project
         primitiveTypes = ["boolean", "char", "int", "long", "float", "double"]
 
         if javaType == "void"
-            return "Nothing"
-        # FIXME: Not this prevents JavaValue of Strings...
+            "Nothing"
+        # FIXME: Now this prevents JavaValue of Strings...
         elseif javaType == "java.lang.String" && !is_not_julia_parameter
-            return "String"
+            "String"
         elseif javaType in primitiveTypes
-            return "j" * javaType
+            "j" * javaType
         elseif occursin("[]", javaType)
             reference_type = getTypeFromJava(javaType[begin:end - 2], is_not_julia_parameter)
-            return "Vector{$reference_type}"
+            "Vector{$reference_type}"
+        elseif javaType == "java.lang.Object"
+            is_not_julia_parameter ? "JavaObject{Symbol(\"$(javaType)\")}" : "JavaValue{JavaObject{Symbol(\"$(javaType)\")}}"
         else 
-            return is_not_julia_parameter ? "JavaObject{Symbol(\"$(javaType)\")}" : "JavaValue{JavaObject{Symbol(\"$(javaType)\")}}"
+            is_not_julia_parameter ? "JavaObject{Symbol(\"$(javaType)\")}" : "JavaValue{JavaObject{Symbol(\"$(javaType)\")}}"
         end
     end
 
     function isPrimitive(javaType)
-        return javaType in ["boolean", "char", "int", "long", "float", "double", "void"] || occursin("[]", javaType)
+        javaType in ["boolean", "char", "int", "long", "float", "double", "void"] || occursin("[]", javaType)
     end
 
     function isJavaObject(javaType)
-        return occursin("java.lang.Object", getname(javaType))
+        occursin("java.lang.Object", getname(javaType))
     end
 
     # Returns an array, where the first element is a boolean representing if a module is new
@@ -92,6 +94,51 @@ module project
         curr_module_instance
     end
 
+    function getVariablesForFunction(java_param_types)
+        # variables = join(map( type -> isJavaObject(type[2]) ? "convert(JObject, eval(Meta.parse(getTypeFromJava(x$(type[1])))))" : "x$(type[1])", enumerate(java_param_types)), ", ") * ","
+        # variables = join(map(type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
+        join(
+            map(
+                # [Datetime.now()]
+                type -> begin
+                    name_type = getTypeFromJava(getname(type[2]), false)
+                    # Vector{JavaValue} -> :), Vector{Vector{JavaValue}} -> :(
+                    if occursin("Vector", name_type) && occursin("JavaValue", name_type)
+                        "map(el -> getfield(el, :ref), x$(type[1]))"
+                    elseif occursin("JavaValue", name_type)
+                        "getfield(x$(type[1]), :ref)"
+                    else
+                        "x$(type[1])"
+                    end
+                end,
+                enumerate(java_param_types)
+            )
+            , ", "
+        ) * ","
+    end
+
+    function getJuliaParamTypesForFunction(java_param_types)
+        join(map(type -> getTypeFromJava(getname(type)), java_param_types), ", ") * ","
+    end
+
+    function getJuliaVariablesWithTypes(java_param_types)
+        join(
+            map(
+                type -> "x$(type[1])::$( getTypeFromJava(getname(java_param_types[type[1]]), false) )",
+                enumerate(java_param_types)
+            ),
+            ", "
+        ) * ","
+
+        # TODO: Inheritance of types to allow put(x1::Object) to use any type
+        # julia_variables_with_types = join(
+        #     map(type -> "x$(type[1])::$(julia_param_types[type[1]])", enumerate(java_param_types)), ", "
+        # ) * ","
+
+        # julia_variables_with_types = join(map( type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
+
+    end
+
     function importJavaLib(javaLib)
         lib = eval(Meta.parse("@jimport $javaLib"))
 
@@ -104,6 +151,7 @@ module project
         methods = listmethods(lib)
         for method in methods
             method_name = getname(method)
+
             java_return_type = getname(getreturntype(method))
             java_param_types = getparametertypes(method)
 
@@ -111,52 +159,25 @@ module project
 
             variables = ""
             julia_param_types = ""
-            julia_variables_with_types = variables
-            if (length(java_param_types) != 0)
-                # variables = join(map( type -> isJavaObject(type[2]) ? "convert(JObject, eval(Meta.parse(getTypeFromJava(x$(type[1])))))" : "x$(type[1])", enumerate(java_param_types)), ", ") * ","
-                # variables = join(map(type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
+            julia_variables_with_types = ""
 
-                variables = join(
-                    map(
-                        # TODO: Move to a method
-                        # [Datetime.now()]
-                        type -> begin
-                            name_type = getTypeFromJava(getname(type[2]), false)
-                            # Vector{JavaValue} -> :), Vector{Vector{JavaValue}} -> :(
-                            if occursin("Vector", name_type) && occursin("JavaValue", name_type)
-                                "map(el -> getfield(el, :ref), x$(type[1]))"
-                            elseif occursin("JavaValue", name_type)
-                                "getfield(x$(type[1]), :ref)"
-                            else
-                                "x$(type[1])"
-                            end
-                        end,
-                        enumerate(java_param_types)
-                    )
-                    , ", "
-                ) * ","
-                julia_param_types = map(type -> getTypeFromJava(getname(type)), java_param_types)
-                # TODO: Inheritance of types to allow put(x1::Object) to use JString i.e.
-                # julia_variables_with_types = join(
-                #     map(type -> "x$(type[1])::$(julia_param_types[type[1]])", enumerate(java_param_types)), ", "
-                # ) * ","
-
-                julia_variables_with_types = join(
-                    map(type -> "x$(type[1])::$( getTypeFromJava(getname(java_param_types[type[1]]), false) )", enumerate(java_param_types)), ", "
-                ) * ","
-                # julia_variables_with_types = join(map( type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
-                julia_param_types = join(julia_param_types, ", ") * ","
+            if length(java_param_types) != 0
+                variables = getVariablesForFunction(java_param_types)
+                julia_param_types = getJuliaParamTypesForFunction(java_param_types)
+                julia_variables_with_types = getJuliaVariablesWithTypes(java_param_types)
             end
 
             if isStatic(method)
                 method_to_parse = ""
                 if isPrimitive(java_return_type)
-                    method_to_parse = "function $method_name($julia_variables_with_types) jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables) end"
+                    method_to_parse = "function $method_name($julia_variables_with_types)
+                                            jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)
+                                        end"
                 else
                     method_to_parse = "function $method_name($julia_variables_with_types)
-                                                curr_module = getInstanceModule(\"$java_return_type\")
-                                                JavaValue{$julia_return_type}(jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), curr_module) 
-                                            end"
+                                            curr_module = getInstanceModule(\"$java_return_type\")
+                                            JavaValue{$julia_return_type}(jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), curr_module) 
+                                        end"
                 end
                 Base.eval(curr_module_static, Meta.parse(method_to_parse))
             else
@@ -173,6 +194,7 @@ module project
                 try
                     Base.eval(curr_module_instance, Meta.parse(instance_method))
                 catch e
+                    # println(instance_method)
                     println(e)
                 end
             end
@@ -188,17 +210,11 @@ module project
                     
                 variables = ""
                 julia_param_types = ""
-                julia_variables_with_types = variables
+                julia_variables_with_types = ""
                 if (length(java_param_types) != 0)
-                    variables = join(map(type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
-                    # julia_param_types = map(type -> getTypeFromJava(getname(type), false), java_param_types)
-                    # julia_variables_with_types = join(map(type -> "x$(type[1])::$(julia_param_types[type[1]])", enumerate(java_param_types)), ", ") * ","
-
-                    julia_variables_with_types = join(map(type -> "x$(type[1])::$(getTypeFromJava(getname(type[2]), false))", enumerate(java_param_types)), ", ") * ","
-                    
-                    
-                    julia_param_types = map(type -> getTypeFromJava(getname(type)), java_param_types)
-                    julia_param_types = join(julia_param_types, ", ") * ","
+                    variables = getVariablesForFunction(java_param_types)
+                    julia_variables_with_types = getJuliaVariablesWithTypes(java_param_types)
+                    julia_param_types = getJuliaParamTypesForFunction(java_param_types)
                 end
 
                 return_type = getTypeFromJava(javaLib, false)
@@ -216,7 +232,7 @@ module project
             end
         end
 
-            # Add all constants/fields
+        # Add all constants/fields
         if (javaLib != "java.lang.Class")
             cls = classforname(javaLib)
             fields = jcall(cls, "getFields", Vector{JField}, ())

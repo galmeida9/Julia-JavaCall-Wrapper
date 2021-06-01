@@ -30,6 +30,6 @@ StringMod.new("123").concat("123").toString()
 # field_january(month_lib)
 
 ### é isto crl
-function test(x::T) where {T<:Any}
+function test(x::JavaValue{T}) where {T<:JavaObject}
   println(x)
 end
