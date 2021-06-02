@@ -128,10 +128,15 @@ module project
         join(map(type -> getTypeFromJava(getname(type)), java_param_types), ", ") * ","
     end
 
-    function getJuliaVariablesWithTypes(java_param_types)
+    function getJuliaVariablesWithTypes(java_param_types, instance = false)
         params = "("
         params_jobject = "("
         where_tag = ""
+
+        if instance
+            params         = params          * "instance, "
+            params_jobject = params_jobject  * "instance, "
+        end
 
         for (index, type) in enumerate(java_param_types)
             if isJavaObject(type)
@@ -181,18 +186,24 @@ module project
     end
 
     function createInstancePrimitiveFunction(method_name, julia_var_w_types, lib, julia_return_type, julia_param_types, variables)
-        "$method_name = (instance) -> 
-            function $(julia_var_w_types) 
-                jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)
-            end"
+        "function _$method_name$julia_var_w_types 
+            jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)
+        end"
     end
 
     function createInstanceNonPrimitiveFunction(method_name, julia_var_w_types, java_return_type, lib, julia_return_type, julia_param_types, variables)
-        "$method_name = (instance) ->
-            function $(julia_var_w_types)
-                curr_module = getInstanceModule(\"$java_return_type\")
-                JavaValue{$julia_return_type}(jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), curr_module)
-            end"
+        "function _$method_name$julia_var_w_types
+            curr_module = getInstanceModule(\"$java_return_type\")
+            JavaValue{$julia_return_type}(jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), curr_module)
+        end"
+    end
+
+    function createMainInstanceFunction(method_name)
+        "function $method_name(instance)
+            function (args...)
+                _$method_name(instance, args...)
+            end
+        end"
     end
 
     function addConstantsAndFields(javaLib, lib, curr_module_static)
@@ -294,21 +305,24 @@ module project
                     end
                 end
             else
-                # TODO: this should work
-                # for var_types in julia_var_w_types
-                #     if var_types != ""
-                #         Base.eval(curr_module_instance, Meta.parse(
-                #             isPrimitive(java_return_type) ? 
-                #                 createInstancePrimitiveFunction(method_name, var_types, lib, julia_return_type, julia_param_types, variables) :
-                #                 createInstanceNonPrimitiveFunction(method_name, var_types, java_return_type, lib, julia_return_type, julia_param_types, variables)
-                #         ))
-                #     end
-                # end
-                Base.eval(curr_module_instance, Meta.parse(
-                    isPrimitive(java_return_type) ? 
-                        createInstancePrimitiveFunction(method_name, julia_var_w_types[1], lib, julia_return_type, julia_param_types, variables) :
-                        createInstanceNonPrimitiveFunction(method_name, julia_var_w_types[1], java_return_type, lib, julia_return_type, julia_param_types, variables)
-                ))
+                julia_var_w_types = getJuliaVariablesWithTypes(java_param_types, true)
+                for var_types in julia_var_w_types
+                    if var_types != ""
+                        Base.eval(curr_module_instance, Meta.parse(
+                            isPrimitive(java_return_type) ? 
+                                createInstancePrimitiveFunction(method_name, var_types, lib, julia_return_type, julia_param_types, variables) :
+                                createInstanceNonPrimitiveFunction(method_name, var_types, java_return_type, lib, julia_return_type, julia_param_types, variables)
+                        ))
+                    end
+                end
+            end
+        end
+
+        for method in methods
+            method_name = getname(method)
+
+            if !isStatic(method)
+                Base.eval(curr_module_instance, Meta.parse(createMainInstanceFunction(method_name)))
             end
         end
         
@@ -322,25 +336,3 @@ module project
 
     export getInstanceModule, importJavaLib, JavaValue # FIXME: Remove JavaValue?
 end
-
-# function JFieldInfo(field::JField)
-#     fcl = jcall(field, "getType", JClass, ())
-#     typ = juliaTypeFor(legalClassName(fcl))
-#     static = isStatic(field)
-#     cls = jcall(field, "getDeclaringClass", JClass, ())
-#     id = fieldId(getname(field), JavaObject{Symbol(legalClassName(fcl))}, static, field, cls)
-#     info = get(typeInfo, legalClassName(fcl), genericFieldInfo)
-#     JFieldInfo{info.convertType}(field, info, static, id, cls)
-# end
-
-# Para obter o valor do field (i.e.: Math.PI)
-# math_class = classforname("java.lang.Math")
-# field_pi = jcall(math_class, "getFields", Vector{JField}, ())[2]
-# field_pi(math_lib)
-
-# Para saber os métodos dum módulo: names(Math, all=true)
-
-
-# a = Module.get_array() => HashMap[]
-# Vector{JavaObject{HashMap}}
-# a[0].put(...)

@@ -15,7 +15,7 @@ TODOs:
 - [ ] What about Arrays of anything?
 - [X] When calling a method, transform the JavaValue to its reference (i.e.: Datetime.of(Int32(2021), Month.FEBRUARY, Int32(28)) does not work, but
   this Datetime.of(Int32(2021), getfield(Month.FEBRUARY, :ref), Int32(28)) works)
-- [ ] Duplicate the methods that can receive a JObject to allow them
+- [X] Duplicate the methods that can receive a JObject to allow them
 - [X] Duplicate the methods that can receive arrays of JObject to allow them
 - [ ] Try to guess the real class of the JObject and try to convert it
 - [ ] Duplicate the methods that can receive a JString to allow either a String or a JavaValue{JString}
