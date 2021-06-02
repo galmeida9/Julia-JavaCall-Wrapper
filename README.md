@@ -17,10 +17,11 @@ TODOs:
   this Datetime.of(Int32(2021), getfield(Month.FEBRUARY, :ref), Int32(28)) works)
 - [X] Duplicate the methods that can receive a JObject to allow them
 - [X] Duplicate the methods that can receive arrays of JObject to allow them
-- [ ] Try to guess the real class of the JObject and try to convert it
-- [ ] Duplicate the methods that can receive a JString to allow either a String or a JavaValue{JString}
+- [ ] When returning an array of JObject, convert to an array of JavaValue
+- [X] Duplicate the methods that can receive a JString to allow either a String or a JavaValue{JString}
 - [ ] Dar padding aos arrays com NULL (i.e.: Arrays.copyOf([Datetime.now().plusDays(8)], Int32(2)))
-- [ ] Duplicate the methods that can receive a JObject to allow primitives
+- [X] Duplicate the methods that can receive a JObject to allow primitives
+- [X] Try to guess the real class (on return) of the JObject and try to convert it (and for arrays as well) (must checkout for sure)
 
 TODOs bacanos não obrigatórios:
 - [ ] Apanhar as exceções, try catch + print(exception.getMessage())
@@ -30,3 +31,4 @@ StringModule = importJavaLib("java.lang.String") manda ERROR: LoadError: UndefVa
 
 Herança com convert???
 
+# jcall(getfield(set, :ref), "add", JObject, (JObject,), convert(JavaObject{Symbol("java.lang.Integer")}, 345345))

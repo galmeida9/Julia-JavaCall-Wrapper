@@ -53,6 +53,32 @@ module project
         end
     end
 
+    function getTypesConvertion(value)
+        # Get generic type, without parametric types
+        generic_type(::Type{T}) where T = eval(nameof(T))
+        type = generic_type(typeof(value))
+
+        # TODO: Add remainining types
+        types_convertion = Dict(
+            Bool        => (x) -> jcall(JavaObject{Symbol("java.lang.Boolean")}, "valueOf", JavaObject{Symbol("java.lang.Boolean")}, (JString,), String(Symbol(x))),
+            String      => (x) -> convert(JString, x),
+            Char        => (x) -> jcall(JavaObject{Symbol("java.lang.String")}, "valueOf", JavaObject{Symbol("java.lang.String")}, (jchar,), x),
+            Int64       => (x) -> convert(JavaObject{Symbol("java.lang.Long")}, x),
+            Int32       => (x) -> convert(JavaObject{Symbol("java.lang.Integer")}, x),
+            Float64     => (x) -> convert(JavaObject{Symbol("java.lang.Double")}, x),
+            Float32     => (x) -> convert(JavaObject{Symbol("java.lang.Float")}, x),
+            JavaValue   => (x) -> getfield(x, :ref),
+            Vector      => (x) -> map(el -> getTypesConvertion(el), x),
+            Array       => (x) -> map(el -> getTypesConvertion(el), x),
+        )
+
+        if type in keys(types_convertion)
+            types_convertion[type](value)
+        else
+            value
+        end
+    end
+
     function isPrimitive(javaType)
         javaType in ["boolean", "char", "int", "long", "float", "double", "void"] || occursin("[]", javaType)
     end
@@ -102,66 +128,54 @@ module project
     end
 
     function getVariablesForFunction(java_param_types)
-        # variables = join(map( type -> isJavaObject(type[2]) ? "convert(JObject, eval(Meta.parse(getTypeFromJava(x$(type[1])))))" : "x$(type[1])", enumerate(java_param_types)), ", ") * ","
-        # variables = join(map(type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
         join(
-            map(
-                # [Datetime.now()]
-                type -> begin
-                    name_type = getTypeFromJava(getname(type[2]), false)
-                    # Vector{JavaValue} -> :), Vector{Vector{JavaValue}} -> :(
-                    if occursin("Vector", name_type) && occursin("JavaValue", name_type)
-                        "map(el -> getfield(el, :ref), x$(type[1]))"
-                    elseif occursin("JavaValue", name_type)
-                        "getfield(x$(type[1]), :ref)"
-                    else
-                        "x$(type[1])"
-                    end
-                end,
-                enumerate(java_param_types)
-            )
+            map(type -> "x$(type[1])", enumerate(java_param_types) )
             , ", "
-        ) * ","
+        ) * ", "
     end
 
     function getJuliaParamTypesForFunction(java_param_types)
-        join(map(type -> getTypeFromJava(getname(type)), java_param_types), ", ") * ","
+        join(map(type -> isJavaObject(type[2]) ? "JObject" : getTypeFromJava(getname(type[2])), enumerate(java_param_types)), ", ") * ","
     end
 
     function getJuliaVariablesWithTypes(java_param_types, instance = false)
+        all_params = []
         params = "("
-        params_jobject = "("
+        params_javaValue = "("
         where_tag = ""
 
         if instance
-            params         = params          * "instance, "
-            params_jobject = params_jobject  * "instance, "
+            params              = params            * "instance, "
+            params_javaValue    = params_javaValue  * "instance, "
         end
 
         for (index, type) in enumerate(java_param_types)
             if isJavaObject(type)
-                params         = params * "x$(index)::JavaValue{T$(index)}, "
-                params_jobject = params_jobject * "x$(index)::$( getTypeFromJava(getname(type)) ), "
-                where_tag      = where_tag * "T$(index)<:JavaObject, "
+                params              = params            * "x$(index)::T$(index), "
+                params_javaValue    = params_javaValue  * "x$(index)::JavaValue{T$(index)}, "
+                where_tag           = where_tag         * "T$(index)<:Any, "
             elseif isArrayOfJavaObject(type)
-                params         = params * "x$(index)::Vector{JavaValue{T$(index)}}, "
-                params_jobject = params_jobject * "x$(index)::Vector{$( getTypeFromJava(getname(type)) )}, "
-                where_tag      = where_tag * "T$(index)<:JavaObject, "
+                params              = params            * "x$(index)::Vector{JavaValue{T$(index)}}, "
+                params_javaValue    = params_javaValue  * "x$(index)::Vector{$( getTypeFromJava(getname(type)) )}, "
+                where_tag           = where_tag         * "T$(index)<:JavaObject, "
             else
-                params         = params * "x$(index)::$( getTypeFromJava(getname(type), false) ), "
-                params_jobject = params_jobject * "x$(index)::$( getTypeFromJava(getname(type), false) ), "
+                params              = params            * "x$(index)::$( getTypeFromJava(getname(type), false) ), "
+                params_javaValue    = params_javaValue  * "x$(index)::$( getTypeFromJava(getname(type), false) ), "
             end
         end
 
-        params         = params * ")"
-        params_jobject = params_jobject * ")"
+        params           = params * ")"
+        params_javaValue = params_javaValue * ")"
 
         if where_tag != ""
             where_tag = " where {" * where_tag * "}"
-            return [params * where_tag, params_jobject]
+            push!(all_params, params * where_tag)
+            push!(all_params, params_javaValue  * where_tag)
         else
-            return [params, ""]
+            push!(all_params, params)
         end
+
+        all_params
 
         # TODO: Inheritance of types to allow put(x1::Object) to use any type
         # julia_variables_with_types = join(
@@ -172,27 +186,40 @@ module project
 
     end
 
+    function getAllVariablesConverted(variables)
+        curr_variables = split(variables, ", ", keepempty=false)
+        res = ""
+        for var in curr_variables
+            res *= "$var = getTypesConvertion($var)\n"
+        end
+        res
+    end
+
     function createStaticPrimitiveFunction(method_name, julia_var_w_types, lib, julia_return_type, julia_param_types, variables)
         "function $method_name$julia_var_w_types
+            $(getAllVariablesConverted(variables))
             jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)
         end"
     end
 
     function createStaticNonPrimitiveFunction(method_name, julia_var_w_types, java_return_type, lib, julia_return_type, julia_param_types, variables)
         "function $method_name$julia_var_w_types
+            $(getAllVariablesConverted(variables))
             curr_module = getInstanceModule(\"$java_return_type\")
             JavaValue{$julia_return_type}(jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), curr_module) 
         end"
     end
 
-    function createInstancePrimitiveFunction(method_name, julia_var_w_types, lib, julia_return_type, julia_param_types, variables)
-        "function _$method_name$julia_var_w_types 
+    function createInstancePrimitiveFunction(method_name, julia_var_w_types, julia_return_type, julia_param_types, variables)
+        "function _$method_name$julia_var_w_types
+            $(getAllVariablesConverted(variables))            
             jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)
         end"
     end
 
-    function createInstanceNonPrimitiveFunction(method_name, julia_var_w_types, java_return_type, lib, julia_return_type, julia_param_types, variables)
+    function createInstanceNonPrimitiveFunction(method_name, julia_var_w_types, java_return_type, julia_return_type, julia_param_types, variables)
         "function _$method_name$julia_var_w_types
+            $(getAllVariablesConverted(variables))
             curr_module = getInstanceModule(\"$java_return_type\")
             JavaValue{$julia_return_type}(jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), curr_module)
         end"
@@ -247,7 +274,7 @@ module project
             julia_variables_with_types = "()"
             if (length(java_param_types) != 0)
                 variables = getVariablesForFunction(java_param_types)
-                julia_variables_with_types, _ = getJuliaVariablesWithTypes(java_param_types)
+                julia_variables_with_types = getJuliaVariablesWithTypes(java_param_types)[1]
                 julia_param_types = getJuliaParamTypesForFunction(java_param_types)
             end
 
@@ -286,7 +313,7 @@ module project
 
             variables = ""
             julia_param_types = ""
-            julia_var_w_types = ["()", ""]
+            julia_var_w_types = ["()"]
 
             if length(java_param_types) != 0
                 variables = getVariablesForFunction(java_param_types)
@@ -296,28 +323,33 @@ module project
 
             if isStatic(method)
                 for var_types in julia_var_w_types
-                    if var_types != ""
-                        Base.eval(curr_module_static, Meta.parse(
-                            isPrimitive(java_return_type) ? 
-                                createStaticPrimitiveFunction(method_name, var_types, lib, julia_return_type, julia_param_types, variables) :
-                                createStaticNonPrimitiveFunction(method_name, var_types, java_return_type, lib, julia_return_type, julia_param_types, variables)
-                        ))
+                    if isJavaObject(getreturntype(method)) && occursin("<:Any", var_types)
+                        julia_return_type = "T"
                     end
+                    method_to_parse = isPrimitive(java_return_type) ? 
+                        createStaticPrimitiveFunction(method_name, var_types, lib, julia_return_type, julia_param_types, variables) :
+                        createStaticNonPrimitiveFunction(method_name, var_types, java_return_type, lib, julia_return_type, julia_param_types, variables)
+                    Base.eval(curr_module_static, Meta.parse(
+                        method_to_parse
+                    ))
                 end
             else
                 julia_var_w_types = getJuliaVariablesWithTypes(java_param_types, true)
                 for var_types in julia_var_w_types
-                    if var_types != ""
-                        Base.eval(curr_module_instance, Meta.parse(
-                            isPrimitive(java_return_type) ? 
-                                createInstancePrimitiveFunction(method_name, var_types, lib, julia_return_type, julia_param_types, variables) :
-                                createInstanceNonPrimitiveFunction(method_name, var_types, java_return_type, lib, julia_return_type, julia_param_types, variables)
-                        ))
+                    if isJavaObject(getreturntype(method)) && occursin("<:Any", var_types)
+                        julia_return_type = "T"
                     end
+                    method_to_parse = isPrimitive(java_return_type) ? 
+                        createInstancePrimitiveFunction(method_name, var_types, julia_return_type, julia_param_types, variables) :
+                        createInstanceNonPrimitiveFunction(method_name, var_types, java_return_type, julia_return_type, julia_param_types, variables)
+                    Base.eval(curr_module_instance, Meta.parse(
+                        method_to_parse
+                    ))
                 end
             end
         end
 
+        # Add instance methods to module
         for method in methods
             method_name = getname(method)
 
@@ -334,5 +366,5 @@ module project
         curr_module_static
     end
 
-    export getInstanceModule, importJavaLib, JavaValue # FIXME: Remove JavaValue?
+    export getInstanceModule, getTypesConvertion, importJavaLib, JavaValue # FIXME: Remove JavaValue?
 end
