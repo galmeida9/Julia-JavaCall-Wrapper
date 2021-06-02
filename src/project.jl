@@ -57,8 +57,12 @@ module project
         javaType in ["boolean", "char", "int", "long", "float", "double", "void"] || occursin("[]", javaType)
     end
 
+    function isArrayOfJavaObject(javaType)
+        getname(javaType)  == "java.lang.Object[]"
+    end
+
     function isJavaObject(javaType)
-        occursin("java.lang.Object", getname(javaType))
+        getname(javaType)  == "java.lang.Object"
     end
 
     # Returns an array, where the first element is a boolean representing if a module is new
@@ -126,26 +130,30 @@ module project
 
     function getJuliaVariablesWithTypes(java_param_types)
         params = "("
-        params2 = "("
+        params_jobject = "("
         where_tag = ""
 
         for (index, type) in enumerate(java_param_types)
             if isJavaObject(type)
-                params = params * "x$(index)::JavaValue{T$(index)}, "
-                params2 = params2 * "x$(index)::$( getTypeFromJava(getname(type)) ), "
-                where_tag = where_tag * "T$(index)<:JavaObject, "
+                params         = params * "x$(index)::JavaValue{T$(index)}, "
+                params_jobject = params_jobject * "x$(index)::$( getTypeFromJava(getname(type)) ), "
+                where_tag      = where_tag * "T$(index)<:JavaObject, "
+            elseif isArrayOfJavaObject(type)
+                params         = params * "x$(index)::Vector{JavaValue{T$(index)}}, "
+                params_jobject = params_jobject * "x$(index)::Vector{$( getTypeFromJava(getname(type)) )}, "
+                where_tag      = where_tag * "T$(index)<:JavaObject, "
             else
-                params = params * "x$(index)::$( getTypeFromJava(getname(type), false) ), "
-                params2 = params2 * "x$(index)::$( getTypeFromJava(getname(type), false) ), "
+                params         = params * "x$(index)::$( getTypeFromJava(getname(type), false) ), "
+                params_jobject = params_jobject * "x$(index)::$( getTypeFromJava(getname(type), false) ), "
             end
         end
 
-        params = params * ")"
-        params2 = params2 * ")"
+        params         = params * ")"
+        params_jobject = params_jobject * ")"
 
         if where_tag != ""
             where_tag = " where {" * where_tag * "}"
-            return [params * where_tag, params2]
+            return [params * where_tag, params_jobject]
         else
             return [params, ""]
         end
