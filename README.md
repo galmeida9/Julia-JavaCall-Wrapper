@@ -22,10 +22,11 @@ TODOs:
 - [ ] Dar padding aos arrays com NULL (i.e.: Arrays.copyOf([Datetime.now().plusDays(8)], Int32(2)))
 - [X] Duplicate the methods that can receive a JObject to allow primitives
 - [X] Try to guess the real class (on return) of the JObject and try to convert it (and for arrays as well) (must checkout for sure)
+- [ ] Add method to return the reference
 
 TODOs bacanos não obrigatórios:
 - [ ] Apanhar as exceções, try catch + print(exception.getMessage())
-- [ ] Criar? methods para mostrar os métodos da instância ou da classe?
+- [ ] Criar? methods para mostrar os métodos da instância ou da classe? / Fazer autocomplete propertyName
 
 StringModule = importJavaLib("java.lang.String") manda ERROR: LoadError: UndefVarError: Lookup not defined
 

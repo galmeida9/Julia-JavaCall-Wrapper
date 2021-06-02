@@ -24,7 +24,7 @@ module project
     end
 
     # CONSTANTS #
-    const global MODULE_STATIC_NAME = "_static"
+    const global MODULE_STATIC_NAME   = "_static"
     const global MODULE_INSTANCE_NAME = "_instance"
 
     # Convert Java Objects to String with toString method 
@@ -212,7 +212,7 @@ module project
 
     function createInstancePrimitiveFunction(method_name, julia_var_w_types, julia_return_type, julia_param_types, variables)
         "function _$method_name$julia_var_w_types
-            $(getAllVariablesConverted(variables))            
+            $(getAllVariablesConverted(variables))         
             jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)
         end"
     end
@@ -245,14 +245,13 @@ module project
                 field_to_parse = "$field_name = $(field(lib))"
                 Base.eval(curr_module_static, Meta.parse(field_to_parse))
             else
-            # TODO: Improve getting the fields without calling JavaCall and getting always an array
                 field_to_parse =
                 "$field_name = 
                 (function() 
                     JavaValue(
                     (function()
                         cls = classforname(\"$javaLib\")
-                        jcall(cls, \"getFields\", Vector{JField})[$index]($lib)
+                        jcall(cls, \"getField\", JField, (JString, ), \"$field_name\")($lib)
                     end)(),
                     getInstanceModule(\"$java_field_type\")
                     )
@@ -271,25 +270,32 @@ module project
                 
             variables = ""
             julia_param_types = ""
-            julia_variables_with_types = "()"
+            julia_variables_with_types = ["()"]
             if (length(java_param_types) != 0)
                 variables = getVariablesForFunction(java_param_types)
-                julia_variables_with_types = getJuliaVariablesWithTypes(java_param_types)[1]
+                julia_variables_with_types = getJuliaVariablesWithTypes(java_param_types)
                 julia_param_types = getJuliaParamTypesForFunction(java_param_types)
             end
 
             return_type = getTypeFromJava(javaLib, false)
             method_to_parse = ""
             if return_type == "String"
-                method_to_parse = "function new$julia_variables_with_types
-                                        JavaValue(JString(($lib)(($julia_param_types), $variables)), $curr_module_instance)
-                                    end"
+                for var_types in julia_variables_with_types
+                    method_to_parse = "function new$var_types
+                                            $(getAllVariablesConverted(variables))
+                                            JavaValue(JString(($lib)(($julia_param_types), $variables)), $curr_module_instance)
+                                        end"
+                    Base.eval(curr_module_static, Meta.parse(method_to_parse))
+                end
             else occursin("JavaValue", return_type)
-                method_to_parse = "function new$julia_variables_with_types
-                                        JavaValue(($lib)(($julia_param_types), $variables), $curr_module_instance)
-                                    end"
+                for var_types in julia_variables_with_types
+                    method_to_parse = "function new$var_types
+                                            $(getAllVariablesConverted(variables))
+                                            JavaValue(($lib)(($julia_param_types), $variables), $curr_module_instance)
+                                        end"
+                    Base.eval(curr_module_static, Meta.parse(method_to_parse))
+                end
             end
-            Base.eval(curr_module_static, Meta.parse(method_to_parse))
         end
     end
 
@@ -326,12 +332,11 @@ module project
                     if isJavaObject(getreturntype(method)) && occursin("<:Any", var_types)
                         julia_return_type = "T"
                     end
+                    
                     method_to_parse = isPrimitive(java_return_type) ? 
                         createStaticPrimitiveFunction(method_name, var_types, lib, julia_return_type, julia_param_types, variables) :
                         createStaticNonPrimitiveFunction(method_name, var_types, java_return_type, lib, julia_return_type, julia_param_types, variables)
-                    Base.eval(curr_module_static, Meta.parse(
-                        method_to_parse
-                    ))
+                    Base.eval(curr_module_static, Meta.parse(method_to_parse))
                 end
             else
                 julia_var_w_types = getJuliaVariablesWithTypes(java_param_types, true)
@@ -339,12 +344,11 @@ module project
                     if isJavaObject(getreturntype(method)) && occursin("<:Any", var_types)
                         julia_return_type = "T"
                     end
+
                     method_to_parse = isPrimitive(java_return_type) ? 
                         createInstancePrimitiveFunction(method_name, var_types, julia_return_type, julia_param_types, variables) :
                         createInstanceNonPrimitiveFunction(method_name, var_types, java_return_type, julia_return_type, julia_param_types, variables)
-                    Base.eval(curr_module_instance, Meta.parse(
-                        method_to_parse
-                    ))
+                    Base.eval(curr_module_instance, Meta.parse(method_to_parse))
                 end
             end
         end
@@ -366,5 +370,5 @@ module project
         curr_module_static
     end
 
-    export getInstanceModule, getTypesConvertion, importJavaLib, JavaValue # FIXME: Remove JavaValue?
+    export getInstanceModule, getTypesConvertion, importJavaLib, JavaValue # FIXME: ON DELIVERY remove JavaValue?
 end
