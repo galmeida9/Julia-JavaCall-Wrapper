@@ -1,15 +1,27 @@
 module project_struct
     using JavaCall
 
-    struct JavaValue{T<:JavaObject}
-        ref::T
+    struct JavaValue{T1}
+        ref::JavaObject
         methods::Module
+
+        function JavaValue{T}(ref, methods) where T
+            new{T}(ref, methods)
+        end
     end
 
-    Base.show(io::IO, obj::JavaValue) = print(io, jcall(getfield(obj, :ref), "toString", JString, ()))
-    Base.getproperty(jv::JavaValue, sym::Symbol) = getfield(getfield(jv, :methods), sym)(getfield(jv, :ref))
+    function _getRef(jv::JavaValue)
+        getfield(jv, :ref)
+    end
 
-    export JavaValue
+    function _getMethods(jv::JavaValue)
+        getfield(jv, :methods)
+    end
+
+    Base.show(io::IO, obj::JavaValue) = print(io, jcall(_getRef(obj), "toString", JString, ()))
+    Base.getproperty(jv::JavaValue, sym::Symbol) = getfield(_getMethods(jv), sym)(_getRef(jv))
+
+    export JavaValue, _getRef, _getMethods, java_lang_Object
 end
 
 module project
@@ -28,7 +40,13 @@ module project
     const global MODULE_INSTANCE_NAME = "_instance"
 
     # Convert Java Objects to String with toString method 
-    Base.show(io::IO, obj::JavaObject) = print(io, jcall(obj, "toString", JString, ()))
+    Base.show(io::IO, obj::JavaObject) = begin
+        if isnull(obj)
+            print(io, "null")
+        else
+            print(io, jcall(obj, "toString", JString, ()))
+        end
+    end
     Base.show(io::IO, obj::jboolean) = print(io, Bool(obj))
 
     function getTypeFromJava(javaType, is_not_julia_parameter=true)
@@ -36,13 +54,16 @@ module project
 
         if javaType == "void"
             "Nothing"
-        # FIXME: Now this prevents JavaValue of Strings...
         elseif javaType == "java.lang.String" && !is_not_julia_parameter
             "String"
         elseif javaType == "boolean" && !is_not_julia_parameter
             "Bool"
         elseif javaType == "boolean" && is_not_julia_parameter
             "UInt8"
+        elseif javaType == "byte"
+            "UInt8"
+        elseif javaType == "short"
+            "Int16"
         elseif javaType in primitiveTypes
             "j" * javaType
         elseif occursin("[]", javaType)
@@ -67,7 +88,7 @@ module project
             Int32       => (x) -> convert(JavaObject{Symbol("java.lang.Integer")}, x),
             Float64     => (x) -> convert(JavaObject{Symbol("java.lang.Double")}, x),
             Float32     => (x) -> convert(JavaObject{Symbol("java.lang.Float")}, x),
-            JavaValue   => (x) -> getfield(x, :ref),
+            JavaValue   => (x) -> _getRef(x),
             Vector      => (x) -> map(el -> getTypesConvertion(el), x),
             Array       => (x) -> map(el -> getTypesConvertion(el), x),
         )
@@ -79,8 +100,15 @@ module project
         end
     end
 
+    function getReturnValue(ref)
+        if typeof(ref) == String
+            ref = JString(ref)
+        end
+        ref
+    end
+
     function isPrimitive(javaType)
-        javaType in ["boolean", "char", "int", "long", "float", "double", "void"] || occursin("[]", javaType)
+        javaType in ["boolean", "char", "int", "long", "float", "double", "void", "byte", "short"] || occursin("[]", javaType)
     end
 
     function isArrayOfJavaObject(javaType)
@@ -89,6 +117,10 @@ module project
 
     function isJavaObject(javaType)
         getname(javaType)  == "java.lang.Object"
+    end
+
+    function isStringType(javaType)
+        getname(javaType)  == "java.lang.String"
     end
 
     # Returns an array, where the first element is a boolean representing if a module is new
@@ -102,7 +134,7 @@ module project
                 Base.eval(
                     Main,
                     Meta.parse("module $name
-                                using Main.project_struct, Main.project, JavaCall
+                                using Main, Main.project_struct, Main.project, JavaCall
                                 end")
                 )
             ]
@@ -116,6 +148,15 @@ module project
         isMethodStatic != 0
     end
 
+    function isInterface(class_name)
+        if isPrimitive(class_name)
+            return false
+        end
+
+        is_interface = jcall(classforname(class_name), "isInterface", jboolean, ())
+        is_interface == 1
+    end
+
     function getInstanceModule(java_return_type)
         module_name = replace(java_return_type, '.' => '_')
         isNewModule, curr_module_instance = getModule(module_name * MODULE_INSTANCE_NAME)
@@ -127,9 +168,44 @@ module project
         curr_module_instance
     end
 
-    function getVariablesForFunction(java_param_types)
+    function getAbstractTypeName(given_type_name)
+        curr_type_name = replace(given_type_name, '.' => '_')
+
+        # Try to find if exists at first
+        # If not, create the type and try to get the super class recursively
+        try
+            Base.eval(Main, Meta.parse("$curr_type_name"))
+            return "Main.$curr_type_name"
+        catch
+        end
+
+
+        if given_type_name == "java.lang.Object"
+            Base.eval(Main, Meta.parse("abstract type $curr_type_name end"))
+            return "Main.$curr_type_name"
+        end
+
+        if isInterface(given_type_name)
+            try
+                Base.eval(Main, Meta.parse("$curr_type_name"))
+            catch
+                Base.eval(Main, Meta.parse("abstract type $curr_type_name end"))
+            end
+            return "Main.$curr_type_name"
+        end
+
+        super_class = getname(jcall(classforname(given_type_name), "getSuperclass", JClass, ()))
+        super_class_name = getAbstractTypeName(super_class)
+
+        # Define type
+        Base.eval(Main, Meta.parse("abstract type $curr_type_name <: $super_class_name end"))
+        
+        "Main.$curr_type_name"
+    end
+
+    function getVariablesForFunction(params)
         join(
-            map(type -> "x$(type[1])", enumerate(java_param_types) )
+            map(type -> "x$(type[1])", enumerate(params) )
             , ", "
         ) * ", "
     end
@@ -139,9 +215,9 @@ module project
     end
 
     function getJuliaVariablesWithTypes(java_param_types, instance = false)
-        all_params = []
         params = "("
         params_javaValue = "("
+        where_tag_jv = ""
         where_tag = ""
 
         if instance
@@ -149,15 +225,60 @@ module project
             params_javaValue    = params_javaValue  * "instance, "
         end
 
+        # new Hashset().add(e) => classes (para o JObject)
+        # add(e::JavaValue{T}) where T <: java_lang_Object
+        # add(e::T) where T <: Any
+
+        # HashSet(AbstractCollection c) => classes
+        # new(x1::JavaValue{T}) where T <: java_util_AbstractCollection
+
+        # LocalDate.parse(CharSequence s) => interfaces
+        # parse(x1::JavaValue{T1}) where T1 <: java_lang_CharSequence
+        # parse(x1::JavaValue{T1}) where T1 <: Any
+
+        # Math.min(int a, int b) => primitivas
+        # min(a::Int32, b::Int32)
+
+        # StringMod.new("123").concat(String a).toString() => String
+        # concat(x1::JavaValue{T1}) where (T1 <: java_lang_String)
+        # concat(x1::String)
+
+        # Any => jcall(lib, "...", ..., (T, ))
+        # Any => jcall(lib, "...", ..., (Vector{T}, ))
+        # Any => jcall(lib, "...", ..., (T, ))
+
+        # TODO: improve code
         for (index, type) in enumerate(java_param_types)
+            # TODO: arrays of classes not JObject
             if isJavaObject(type)
                 params              = params            * "x$(index)::T$(index), "
-                params_javaValue    = params_javaValue  * "x$(index)::JavaValue{T$(index)}, "
                 where_tag           = where_tag         * "T$(index)<:Any, "
-            elseif isArrayOfJavaObject(type)
-                params              = params            * "x$(index)::Vector{JavaValue{T$(index)}}, "
-                params_javaValue    = params_javaValue  * "x$(index)::Vector{$( getTypeFromJava(getname(type)) )}, "
-                where_tag           = where_tag         * "T$(index)<:JavaObject, "
+
+                params_javaValue    = params_javaValue  * "x$(index)::JavaValue{T$(index)}, "
+                where_tag_jv        = where_tag_jv      * "T$(index)<:Main.java_lang_Object, "
+            elseif isArrayOfJavaObject(type)        
+                params_javaValue    = params_javaValue  * "x$(index)::Vector{JavaValue{T$(index)}}, "
+                where_tag_jv        = where_tag_jv      * "T$(index)<:Main.java_lang_Object, "
+
+                params              = params            * "x$(index)::Vector{T$index}, "
+                where_tag           = where_tag         * "T$(index)<:Any, "
+            elseif isInterface(getname(type))
+                params              = params            * "x$(index)::JavaValue{T$(index)}, "
+                where_tag           = where_tag         * "T$(index)<:Any, "
+
+                params_javaValue    = params_javaValue  * "x$(index)::JavaValue{T$(index)}, "
+                where_tag_jv        = where_tag_jv      * "T$(index)<:$(getAbstractTypeName(getname(type))), "
+            elseif isStringType(type)
+                params              = params            * "x$(index)::String, "
+
+                params_javaValue    = params_javaValue  * "x$(index)::JavaValue{T$(index)}, "
+                where_tag_jv        = where_tag_jv      * "T$(index)<:$(getAbstractTypeName(getname(type))), "
+            elseif !isPrimitive(getname(type))
+                params_javaValue    = params_javaValue  * "x$(index)::JavaValue{T$(index)}, "
+                where_tag_jv        = where_tag_jv      * "T$(index)<:$(getAbstractTypeName(getname(type))), "
+
+                params              = params_javaValue
+                where_tag           = where_tag_jv
             else
                 params              = params            * "x$(index)::$( getTypeFromJava(getname(type), false) ), "
                 params_javaValue    = params_javaValue  * "x$(index)::$( getTypeFromJava(getname(type), false) ), "
@@ -166,24 +287,28 @@ module project
 
         params           = params * ")"
         params_javaValue = params_javaValue * ")"
+        all_params = []
 
+        # TODO: Improve ifs
         if where_tag != ""
             where_tag = " where {" * where_tag * "}"
             push!(all_params, params * where_tag)
-            push!(all_params, params_javaValue  * where_tag)
-        else
+        end
+
+        if where_tag_jv != ""
+            where_tag_jv = " where {" * where_tag_jv * "}"
+            push!(all_params, params_javaValue * where_tag_jv)
+        end
+
+        if params != "(" && where_tag == ""
             push!(all_params, params)
         end
 
+        if params_javaValue != "(" && where_tag_jv == ""
+            push!(all_params, params_javaValue)
+        end
+
         all_params
-
-        # TODO: Inheritance of types to allow put(x1::Object) to use any type
-        # julia_variables_with_types = join(
-        #     map(type -> "x$(type[1])::$(julia_param_types[type[1]])", enumerate(java_param_types)), ", "
-        # ) * ","
-
-        # julia_variables_with_types = join(map( type -> "x$(type[1])", enumerate(java_param_types)), ", ") * ","
-
     end
 
     function getAllVariablesConverted(variables)
@@ -202,11 +327,13 @@ module project
         end"
     end
 
-    function createStaticNonPrimitiveFunction(method_name, julia_var_w_types, java_return_type, lib, julia_return_type, julia_param_types, variables)
+    function createStaticNonPrimitiveFunction(method_name, julia_var_w_types, java_return_type, jv_type_name, lib, julia_return_type, julia_param_types, variables)
         "function $method_name$julia_var_w_types
             $(getAllVariablesConverted(variables))
             curr_module = getInstanceModule(\"$java_return_type\")
-            JavaValue{$julia_return_type}(jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), curr_module) 
+            return_value = jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)
+            return_value = getReturnValue(return_value)
+            JavaValue{$jv_type_name}(return_value, curr_module) 
         end"
     end
 
@@ -217,11 +344,13 @@ module project
         end"
     end
 
-    function createInstanceNonPrimitiveFunction(method_name, julia_var_w_types, java_return_type, julia_return_type, julia_param_types, variables)
+    function createInstanceNonPrimitiveFunction(method_name, julia_var_w_types, java_return_type, jv_type_name, julia_return_type, julia_param_types, variables)
         "function _$method_name$julia_var_w_types
             $(getAllVariablesConverted(variables))
             curr_module = getInstanceModule(\"$java_return_type\")
-            JavaValue{$julia_return_type}(jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables), curr_module)
+            return_value = jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)
+            return_value = getReturnValue(return_value)
+            JavaValue{$jv_type_name}(return_value, curr_module)
         end"
     end
 
@@ -233,11 +362,11 @@ module project
         end"
     end
 
-    function addConstantsAndFields(javaLib, lib, curr_module_static)
+    function addConstantsAndFields(javaLib, jv_type_name, lib, curr_module_static)
         cls = classforname(javaLib)
         fields = jcall(cls, "getFields", Vector{JField}, ())
 
-        for (index, field) in enumerate(fields)
+        for field in fields
             field_name = getname(field)
             java_field_type = getname(jcall(field, "getType", JClass))
 
@@ -245,15 +374,16 @@ module project
                 field_to_parse = "$field_name = $(field(lib))"
                 Base.eval(curr_module_static, Meta.parse(field_to_parse))
             else
+                # FIXME: Set correct JavaValue type
                 field_to_parse =
                 "$field_name = 
                 (function() 
-                    JavaValue(
-                    (function()
-                        cls = classforname(\"$javaLib\")
-                        jcall(cls, \"getField\", JField, (JString, ), \"$field_name\")($lib)
-                    end)(),
-                    getInstanceModule(\"$java_field_type\")
+                    JavaValue{$jv_type_name}(
+                        (function()
+                            cls = classforname(\"$javaLib\")
+                            jcall(cls, \"getField\", JField, (JString, ), \"$field_name\")($lib)
+                        end)(),
+                        getInstanceModule(\"$java_field_type\")
                     )
                 end)()"
                 Base.eval(curr_module_static, Meta.parse(field_to_parse))
@@ -261,7 +391,7 @@ module project
         end
     end
 
-    function addConstructors(javaLib, lib, curr_module_static, curr_module_instance)
+    function addConstructors(javaLib, jv_type_name, lib, curr_module_static, curr_module_instance)
         cls = classforname(javaLib)
         constructors = jcall(cls, "getConstructors", Vector{JConstructor}, ())
 
@@ -283,7 +413,7 @@ module project
                 for var_types in julia_variables_with_types
                     method_to_parse = "function new$var_types
                                             $(getAllVariablesConverted(variables))
-                                            JavaValue(JString(($lib)(($julia_param_types), $variables)), $curr_module_instance)
+                                            JavaValue{$jv_type_name}(JString(($lib)(($julia_param_types), $variables)), $curr_module_instance)
                                         end"
                     Base.eval(curr_module_static, Meta.parse(method_to_parse))
                 end
@@ -291,7 +421,7 @@ module project
                 for var_types in julia_variables_with_types
                     method_to_parse = "function new$var_types
                                             $(getAllVariablesConverted(variables))
-                                            JavaValue(($lib)(($julia_param_types), $variables), $curr_module_instance)
+                                            JavaValue{$jv_type_name}(($lib)(($julia_param_types), $variables), $curr_module_instance)
                                         end"
                     Base.eval(curr_module_static, Meta.parse(method_to_parse))
                 end
@@ -307,6 +437,8 @@ module project
         _, curr_module_instance = getModule(module_name * MODULE_INSTANCE_NAME)
 
         if (!isNewModule) return curr_module_static end
+
+        curr_type_name = getAbstractTypeName(javaLib)
 
         methods = listmethods(lib)
         for method in methods
@@ -335,7 +467,7 @@ module project
                     
                     method_to_parse = isPrimitive(java_return_type) ? 
                         createStaticPrimitiveFunction(method_name, var_types, lib, julia_return_type, julia_param_types, variables) :
-                        createStaticNonPrimitiveFunction(method_name, var_types, java_return_type, lib, julia_return_type, julia_param_types, variables)
+                        createStaticNonPrimitiveFunction(method_name, var_types, java_return_type, curr_type_name, lib, julia_return_type, julia_param_types, variables)
                     Base.eval(curr_module_static, Meta.parse(method_to_parse))
                 end
             else
@@ -347,7 +479,8 @@ module project
 
                     method_to_parse = isPrimitive(java_return_type) ? 
                         createInstancePrimitiveFunction(method_name, var_types, julia_return_type, julia_param_types, variables) :
-                        createInstanceNonPrimitiveFunction(method_name, var_types, java_return_type, julia_return_type, julia_param_types, variables)
+                        createInstanceNonPrimitiveFunction(method_name, var_types, java_return_type, curr_type_name, julia_return_type, julia_param_types, variables)
+
                     Base.eval(curr_module_instance, Meta.parse(method_to_parse))
                 end
             end
@@ -363,12 +496,12 @@ module project
         end
         
         if (javaLib != "java.lang.Class")
-            addConstructors(javaLib, lib, curr_module_static, curr_module_instance)
-            addConstantsAndFields(javaLib, lib, curr_module_static)
+            addConstructors(javaLib, curr_type_name, lib, curr_module_static, curr_module_instance)
+            addConstantsAndFields(javaLib, curr_type_name, lib, curr_module_static)
         end
 
         curr_module_static
     end
 
-    export getInstanceModule, getTypesConvertion, importJavaLib, JavaValue # FIXME: ON DELIVERY remove JavaValue?
+    export getInstanceModule, getReturnValue, getTypesConvertion, importJavaLib, JavaValue # FIXME: ON DELIVERY remove JavaValue?
 end
