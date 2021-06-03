@@ -1,4 +1,4 @@
-module project_struct
+module JavaValueModule
     using JavaCall
 
     struct JavaValue{T1}
@@ -24,11 +24,10 @@ module project_struct
     export JavaValue, _getRef, _getMethods, java_lang_Object
 end
 
-module project
+module JavaImport
 
     # IMPORTS #
-    # TODO: Improve naming of project_struct
-    using JavaCall, Main.project_struct
+    using JavaCall, Main.JavaValueModule
     
     # Initialize JVM if needed
     if (!JavaCall.isloaded())
@@ -42,13 +41,16 @@ module project
     # Convert Java Objects to String with toString method 
     Base.show(io::IO, obj::JavaObject) = begin
         if isnull(obj)
-            print(io, "null")
+            print(io, nothing)
         else
             print(io, jcall(obj, "toString", JString, ()))
         end
     end
+
+    # Print Boolean correctly in IO
     Base.show(io::IO, obj::jboolean) = print(io, Bool(obj))
 
+    # Converts Java types into Julia types
     function getTypeFromJava(javaType, is_not_julia_parameter=true)
         primitiveTypes = ["char", "int", "long", "float", "double"]
 
@@ -74,6 +76,7 @@ module project
         end
     end
 
+    # Converts Julia types into JavaCall types
     function getTypesConvertion(value)
         # Get generic type, without parametric types
         generic_type(::Type{T}) where T = eval(nameof(T))
@@ -100,17 +103,43 @@ module project
         end
     end
 
+    # Returns value to be used to instantiate a JavaValue (non-primitives)
     function getReturnValue(ref)
         if typeof(ref) == String
             ref = JString(ref)
         end
         ref
     end
+    
+    # Returns the value mapped to a Vector of JavaValue if it is a vector of JavaObjects, otherwise returns itself
+    # This function is only called on primitive functions (which is the case of arrays)
+    function mapVectorToJavaValue(value)
+        if !(typeof(value) <: Vector{T} where (T <: JavaObject))
+            return value
+        end
 
+        map(el -> 
+            begin
+                if !isnull(el)
+                    class_name = getname(getclass(el))
+                    curr_module = getInstanceModule(class_name)
+                    curr_type_name = getAbstractTypeName(class_name)
+                    curr_type = Base.eval(Meta.parse(curr_type_name))
+
+                    el_type = JavaObject{Symbol(class_name)}
+                    new_el = convert(el_type, el)
+                    Main.JavaValue{curr_type}(new_el, curr_module)
+                end
+            end,
+            value)
+    end
+
+    # Returns true if the Java type is a primitive type
     function isPrimitive(javaType)
         javaType in ["boolean", "char", "int", "long", "float", "double", "void", "byte", "short"] || occursin("[]", javaType)
     end
 
+    # Returns true if the Java type is an array of objects
     function isArrayOfJavaObject(javaType)
         getname(javaType)  == "java.lang.Object[]"
     end
@@ -134,13 +163,14 @@ module project
                 Base.eval(
                     Main,
                     Meta.parse("module $name
-                                using Main, Main.project_struct, Main.project, JavaCall
+                                using Main, Main.JavaValueModule, Main.JavaImport, JavaCall
                                 end")
                 )
             ]
         end
     end
 
+    # Check if a method is static
     function isStatic(meth::JMethod)
         modifiersLib = @jimport java.lang.reflect.Modifier
         modifiers = jcall(meth, "getModifiers", jint, ())
@@ -148,6 +178,7 @@ module project
         isMethodStatic != 0
     end
 
+    # Check if it is an interface
     function isInterface(class_name)
         if isPrimitive(class_name)
             return false
@@ -157,6 +188,7 @@ module project
         is_interface == 1
     end
 
+    # Returns the module with instance methods for a given Java type
     function getInstanceModule(java_return_type)
         module_name = replace(java_return_type, '.' => '_')
         isNewModule, curr_module_instance = getModule(module_name * MODULE_INSTANCE_NAME)
@@ -168,6 +200,7 @@ module project
         curr_module_instance
     end
 
+    # Returns the name of the abstract struct for inheritance purposes
     function getAbstractTypeName(given_type_name)
         curr_type_name = replace(given_type_name, '.' => '_')
 
@@ -203,6 +236,7 @@ module project
         "Main.$curr_type_name"
     end
 
+    # Returns a string containing the variables to be used in jcall, e.g: "x1, x2, ..."
     function getVariablesForFunction(params)
         join(
             map(type -> "x$(type[1])", enumerate(params) )
@@ -210,107 +244,81 @@ module project
         ) * ", "
     end
 
+    # Returns a string containing the types of the parameters to be used in jcall, e.g: "jint, JObject, JString, ..."
     function getJuliaParamTypesForFunction(java_param_types)
         join(map(type -> isJavaObject(type[2]) ? "JObject" : getTypeFromJava(getname(type[2])), enumerate(java_param_types)), ", ") * ","
     end
 
+    # Returns a string containing the arguments and types for the function to be defined, e.g: "(x1::String, x2::T1) where {T1<:Any}"
     function getJuliaVariablesWithTypes(java_param_types, instance = false)
+        # function parameters with concrete type
         params = "("
-        params_javaValue = "("
-        where_tag_jv = ""
+        # where tag types, e.g: where {T<:type}
         where_tag = ""
+        # function parameter wrapped in a JavaValue struct
+        params_jv = "("
+        # where tag for JavaValues
+        where_tag_jv = ""
 
         if instance
-            params              = params            * "instance, "
-            params_javaValue    = params_javaValue  * "instance, "
+            params    = params    * "instance, "
+            params_jv = params_jv * "instance, "
         end
 
-        # new Hashset().add(e) => classes (para o JObject)
-        # add(e::JavaValue{T}) where T <: java_lang_Object
-        # add(e::T) where T <: Any
-
-        # HashSet(AbstractCollection c) => classes
-        # new(x1::JavaValue{T}) where T <: java_util_AbstractCollection
-
-        # LocalDate.parse(CharSequence s) => interfaces
-        # parse(x1::JavaValue{T1}) where T1 <: java_lang_CharSequence
-        # parse(x1::JavaValue{T1}) where T1 <: Any
-
-        # Math.min(int a, int b) => primitivas
-        # min(a::Int32, b::Int32)
-
-        # StringMod.new("123").concat(String a).toString() => String
-        # concat(x1::JavaValue{T1}) where (T1 <: java_lang_String)
-        # concat(x1::String)
-
-        # Any => jcall(lib, "...", ..., (T, ))
-        # Any => jcall(lib, "...", ..., (Vector{T}, ))
-        # Any => jcall(lib, "...", ..., (T, ))
-
-        # TODO: improve code
         for (index, type) in enumerate(java_param_types)
-            # TODO: arrays of classes not JObject
             if isJavaObject(type)
-                params              = params            * "x$(index)::T$(index), "
-                where_tag           = where_tag         * "T$(index)<:Any, "
+                params       = params       * "x$(index)::T$(index), "
+                where_tag    = where_tag    * "T$(index)<:Any, "
 
-                params_javaValue    = params_javaValue  * "x$(index)::JavaValue{T$(index)}, "
-                where_tag_jv        = where_tag_jv      * "T$(index)<:Main.java_lang_Object, "
+                params_jv    = params_jv    * "x$(index)::JavaValue{T$(index)}, "
+                where_tag_jv = where_tag_jv * "T$(index)<:Main.java_lang_Object, "
             elseif isArrayOfJavaObject(type)        
-                params_javaValue    = params_javaValue  * "x$(index)::Vector{JavaValue{T$(index)}}, "
-                where_tag_jv        = where_tag_jv      * "T$(index)<:Main.java_lang_Object, "
+                params_jv    = params_jv    * "x$(index)::Vector{JavaValue{T$(index)}}, "
+                where_tag_jv = where_tag_jv * "T$(index)<:Main.java_lang_Object, "
 
-                params              = params            * "x$(index)::Vector{T$index}, "
-                where_tag           = where_tag         * "T$(index)<:Any, "
+                params       = params       * "x$(index)::Vector{T$index}, "
+                where_tag    = where_tag    * "T$(index)<:Any, "
             elseif isInterface(getname(type))
-                params              = params            * "x$(index)::JavaValue{T$(index)}, "
-                where_tag           = where_tag         * "T$(index)<:Any, "
+                params       = params       * "x$(index)::JavaValue{T$(index)}, "
+                where_tag    = where_tag    * "T$(index)<:Any, "
 
-                params_javaValue    = params_javaValue  * "x$(index)::JavaValue{T$(index)}, "
-                where_tag_jv        = where_tag_jv      * "T$(index)<:$(getAbstractTypeName(getname(type))), "
+                params_jv    = params_jv    * "x$(index)::JavaValue{T$(index)}, "
+                where_tag_jv = where_tag_jv * "T$(index)<:$(getAbstractTypeName(getname(type))), "
             elseif isStringType(type)
-                params              = params            * "x$(index)::String, "
+                params       = params       * "x$(index)::String, "
 
-                params_javaValue    = params_javaValue  * "x$(index)::JavaValue{T$(index)}, "
-                where_tag_jv        = where_tag_jv      * "T$(index)<:$(getAbstractTypeName(getname(type))), "
+                params_jv    = params_jv    * "x$(index)::JavaValue{T$(index)}, "
+                where_tag_jv = where_tag_jv * "T$(index)<:$(getAbstractTypeName(getname(type))), "
             elseif !isPrimitive(getname(type))
-                params_javaValue    = params_javaValue  * "x$(index)::JavaValue{T$(index)}, "
-                where_tag_jv        = where_tag_jv      * "T$(index)<:$(getAbstractTypeName(getname(type))), "
+                params_jv    = params_jv    * "x$(index)::JavaValue{T$(index)}, "
+                where_tag_jv = where_tag_jv * "T$(index)<:$(getAbstractTypeName(getname(type))), "
 
-                params              = params_javaValue
-                where_tag           = where_tag_jv
+                params       = params_jv
+                where_tag    = where_tag_jv
             else
-                params              = params            * "x$(index)::$( getTypeFromJava(getname(type), false) ), "
-                params_javaValue    = params_javaValue  * "x$(index)::$( getTypeFromJava(getname(type), false) ), "
+                params       = params       * "x$(index)::$( getTypeFromJava(getname(type), false) ), "
+                params_jv    = params_jv    * "x$(index)::$( getTypeFromJava(getname(type), false) ), "
             end
         end
 
-        params           = params * ")"
-        params_javaValue = params_javaValue * ")"
+        params     = params * ")"
+        params_jv  = params_jv * ")"
         all_params = []
 
-        # TODO: Improve ifs
-        if where_tag != ""
-            where_tag = " where {" * where_tag * "}"
-            push!(all_params, params * where_tag)
+        if params != "()"
+            res_params = where_tag == ""    ? params : "$params where {$where_tag}"
+            push!(all_params, res_params)
         end
 
-        if where_tag_jv != ""
-            where_tag_jv = " where {" * where_tag_jv * "}"
-            push!(all_params, params_javaValue * where_tag_jv)
-        end
-
-        if params != "(" && where_tag == ""
-            push!(all_params, params)
-        end
-
-        if params_javaValue != "(" && where_tag_jv == ""
-            push!(all_params, params_javaValue)
+        if params_jv != "()"
+            res_params = where_tag_jv == "" ? params_jv : "$params_jv where {$where_tag_jv}"
+            push!(all_params, res_params)
         end
 
         all_params
     end
 
+    # Returns code to be used in java functions that converts the argumets into the correct types, e.g: int -> java.lang.Integer
     function getAllVariablesConverted(variables)
         curr_variables = split(variables, ", ", keepempty=false)
         res = ""
@@ -320,13 +328,16 @@ module project
         res
     end
 
+    # Creates a static function that returns a primitive type
     function createStaticPrimitiveFunction(method_name, julia_var_w_types, lib, julia_return_type, julia_param_types, variables)
         "function $method_name$julia_var_w_types
             $(getAllVariablesConverted(variables))
-            jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)
+            value = jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)
+            mapVectorToJavaValue(value)
         end"
     end
 
+    # Creates a static function that returns a non primitive type
     function createStaticNonPrimitiveFunction(method_name, julia_var_w_types, java_return_type, jv_type_name, lib, julia_return_type, julia_param_types, variables)
         "function $method_name$julia_var_w_types
             $(getAllVariablesConverted(variables))
@@ -337,13 +348,16 @@ module project
         end"
     end
 
+    # Creates an instance function that returns a primitive type
     function createInstancePrimitiveFunction(method_name, julia_var_w_types, julia_return_type, julia_param_types, variables)
         "function _$method_name$julia_var_w_types
             $(getAllVariablesConverted(variables))         
-            jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)
+            value = jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)
+            mapVectorToJavaValue(value)
         end"
     end
 
+    # Creates an instance function that returns a non primitive type
     function createInstanceNonPrimitiveFunction(method_name, julia_var_w_types, java_return_type, jv_type_name, julia_return_type, julia_param_types, variables)
         "function _$method_name$julia_var_w_types
             $(getAllVariablesConverted(variables))
@@ -354,6 +368,7 @@ module project
         end"
     end
 
+    # Main function for instance methods that enables overloading of methods
     function createMainInstanceFunction(method_name)
         "function $method_name(instance)
             function (args...)
@@ -362,6 +377,7 @@ module project
         end"
     end
 
+    # Adds Class's constants and fields to the static module to be returned to the user
     function addConstantsAndFields(javaLib, jv_type_name, lib, curr_module_static)
         cls = classforname(javaLib)
         fields = jcall(cls, "getFields", Vector{JField}, ())
@@ -374,15 +390,16 @@ module project
                 field_to_parse = "$field_name = $(field(lib))"
                 Base.eval(curr_module_static, Meta.parse(field_to_parse))
             else
-                # FIXME: Set correct JavaValue type
                 field_to_parse =
                 "$field_name = 
                 (function() 
+                    return_value = (function()
+                                        cls = classforname(\"$javaLib\")
+                                        jcall(cls, \"getField\", JField, (JString, ), \"$field_name\")($lib)
+                                    end)()
+                    return_value = getReturnValue(return_value)
                     JavaValue{$jv_type_name}(
-                        (function()
-                            cls = classforname(\"$javaLib\")
-                            jcall(cls, \"getField\", JField, (JString, ), \"$field_name\")($lib)
-                        end)(),
+                        return_value,
                         getInstanceModule(\"$java_field_type\")
                     )
                 end)()"
@@ -391,6 +408,7 @@ module project
         end
     end
 
+    # Adds Class's constructors to the static module to be returned to the user
     function addConstructors(javaLib, jv_type_name, lib, curr_module_static, curr_module_instance)
         cls = classforname(javaLib)
         constructors = jcall(cls, "getConstructors", Vector{JConstructor}, ())
@@ -408,27 +426,29 @@ module project
             end
 
             return_type = getTypeFromJava(javaLib, false)
-            method_to_parse = ""
-            if return_type == "String"
-                for var_types in julia_variables_with_types
-                    method_to_parse = "function new$var_types
-                                            $(getAllVariablesConverted(variables))
-                                            JavaValue{$jv_type_name}(JString(($lib)(($julia_param_types), $variables)), $curr_module_instance)
-                                        end"
-                    Base.eval(curr_module_static, Meta.parse(method_to_parse))
-                end
-            else occursin("JavaValue", return_type)
-                for var_types in julia_variables_with_types
-                    method_to_parse = "function new$var_types
-                                            $(getAllVariablesConverted(variables))
-                                            JavaValue{$jv_type_name}(($lib)(($julia_param_types), $variables), $curr_module_instance)
-                                        end"
-                    Base.eval(curr_module_static, Meta.parse(method_to_parse))
-                end
+            for var_types in julia_variables_with_types
+                method_to_parse = "function new$var_types
+                                        $(getAllVariablesConverted(variables))
+                                        return_value = ($lib)(($julia_param_types), $variables)
+                                        return_value = getReturnValue(return_value)
+                                        JavaValue{$jv_type_name}(return_value, $curr_module_instance)
+                                    end"
+                Base.eval(curr_module_static, Meta.parse(method_to_parse))
             end
         end
     end
 
+    """
+    ```
+    importJavaLib(javaLib)
+    ```
+    Imports a Java library
+    ### Args
+    * javaLib: The Java library
+
+    ### Returns
+    Module containing the static methods and contructors with the new method
+    """
     function importJavaLib(javaLib)
         lib = eval(Meta.parse("@jimport $javaLib"))
 
@@ -503,5 +523,5 @@ module project
         curr_module_static
     end
 
-    export getInstanceModule, getReturnValue, getTypesConvertion, importJavaLib, JavaValue # FIXME: ON DELIVERY remove JavaValue?
+    export getInstanceModule, getReturnValue, mapVectorToJavaValue, getTypesConvertion, importJavaLib, JavaValue # FIXME: ON DELIVERY remove JavaValue?
 end

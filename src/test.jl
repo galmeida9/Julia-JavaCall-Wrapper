@@ -1,5 +1,5 @@
 include("project.jl")
-using Main.project
+using Main.JavaImport
 
 Math = importJavaLib("java.lang.Math")
 Math.min(1, 2)
