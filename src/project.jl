@@ -20,6 +20,10 @@ module JavaValueModule
 
     Base.show(io::IO, obj::JavaValue) = print(io, jcall(_getRef(obj), "toString", JString, ()))
     Base.getproperty(jv::JavaValue, sym::Symbol) = getfield(_getMethods(jv), sym)(_getRef(jv))
+    Base.propertynames(obj::JavaValue) = filter(m -> 
+            !occursin("#", String(m)) && !occursin("_", String(m)),
+        names(getfield(obj, :methods),all=true)
+    )
 
     export JavaValue, _getRef, _getMethods, java_lang_Object
 end

@@ -1,7 +1,8 @@
 # Advanced Programming Second Project
 
 TODOs:
-- [X] Add instance methods- [X] Only declare static methods in module, if we can
+- [X] Add instance methods
+- [X] Only declare static methods in module, if we can
 - [X] Only generate module if module hasn't been imported
 - [X] Do not reimport a module
 - [X] Methods with arrays???
@@ -27,9 +28,6 @@ TODOs:
 
 TODOs bacanos não obrigatórios:
 - [ ] Apanhar as exceções, try catch + print(exception.getMessage())
-- [ ] Criar? methods para mostrar os métodos da instância ou da classe? / Fazer autocomplete propertyName
+- [x] Criar? methods para mostrar os métodos da instância ou da classe? / Fazer autocomplete propertyName
 - [ ] Poder enviar funções? (try hard)
 
-Herança com convert???
-
-# jcall(getfield(set, :ref), "add", JObject, (JObject,), convert(JavaObject{Symbol("java.lang.Integer")}, 345345))
