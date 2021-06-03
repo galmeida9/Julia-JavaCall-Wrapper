@@ -54,6 +54,34 @@ module JavaImport
     # Print Boolean correctly in IO
     Base.show(io::IO, obj::jboolean) = print(io, Bool(obj))
 
+    # Override JavaCall error handling to throw julia errors without printing the Java error
+    get_error_override = "function JavaCall.geterror(allow=false)
+        isexception = JNI.ExceptionCheck()
+    
+        if isexception == JNI_TRUE
+            jthrow = JNI.ExceptionOccurred()
+            jthrow==C_NULL && throw(\"Java Exception thrown, but no details could be retrieved from the JVM\")
+            JNI.ExceptionClear()
+            jclass = JNI.FindClass(\"java/lang/Throwable\")
+            jclass==C_NULL && throw(\"Java Exception thrown, but no details could be retrieved from the JVM\")
+            jmethodId=JNI.GetMethodID(jclass, \"toString\", \"()Ljava/lang/String;\")
+            jmethodId==C_NULL && throw(\"Java Exception thrown, but no details could be retrieved from the JVM\")
+            res = JNI.CallObjectMethodA(jthrow, jmethodId, Int[])
+            res==C_NULL && throw(\"Java Exception thrown, but no details could be retrieved from the JVM\")
+            msg = unsafe_string(JString(res))
+            JNI.DeleteLocalRef(jthrow)
+            throw(string(\"Error calling Java: \",msg))
+        else
+            if allow==false
+                return #No exception pending, legitimate NULL returned from Java
+            else
+                throw(\"Null from Java. Not known how\")
+            end
+        end
+    end"
+    
+    Base.eval(JavaCall, Meta.parse(get_error_override))
+    
     # Converts Java types into Julia types
     function getTypeFromJava(javaType, is_not_julia_parameter=true)
         primitiveTypes = ["char", "int", "long", "float", "double"]

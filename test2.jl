@@ -45,3 +45,10 @@ LocalDate.parse(timeStr)
 
 Boolean = importJavaLib("java.lang.Boolean")
 Boolean.new(true)
+
+# Exceptions
+try
+  LocalDate.now().atTime(Int32(1), Int32(-1))
+catch e
+  println(e)
+end

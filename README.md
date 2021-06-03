@@ -27,7 +27,7 @@ TODOs:
 - [ ] With interfaces, catch if type given isn't assignable to Interface
 
 TODOs bacanos não obrigatórios:
-- [ ] Apanhar as exceções, try catch + print(exception.getMessage())
+- [X] Apanhar as exceções, try catch + print(exception.getMessage())
 - [x] Criar? methods para mostrar os métodos da instância ou da classe? / Fazer autocomplete propertyName
 - [ ] Poder enviar funções? (try hard)
 
