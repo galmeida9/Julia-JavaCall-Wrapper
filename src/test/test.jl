@@ -1,14 +1,14 @@
 include("../main/project.jl")
 using Main.JavaImport
 
-Boolean = importJavaLib("java.lang.Boolean")
+Boolean   = importJavaLib("java.lang.Boolean")
 StringMod = importJavaLib("java.lang.String")
-Math = importJavaLib("java.lang.Math")
+Math      = importJavaLib("java.lang.Math")
 LocalDate = importJavaLib("java.time.LocalDate")
-Month = importJavaLib("java.time.Month")
-HashMap = importJavaLib("java.util.HashMap")
-HashSet = importJavaLib("java.util.HashSet")
-Arrays = importJavaLib("java.util.Arrays")
+Month     = importJavaLib("java.time.Month")
+HashMap   = importJavaLib("java.util.HashMap")
+HashSet   = importJavaLib("java.util.HashSet")
+Arrays    = importJavaLib("java.util.Arrays")
 
 # Assert that .equals() works
 boolean_1 = Boolean.new(true)
@@ -34,6 +34,15 @@ str_test_4 = str_test_1.concat(str_test_2)
 # Assert import of libs on-the-fly
 start_of_day = LocalDate.now().atStartOfDay() # Should import java.time.LocalDateTime, that was not imported
 @assert typeof(start_of_day).parameters[1] == java_time_LocalDateTime
+
+day_of_week = LocalDate.now().getDayOfWeek() # Should import java.time.DayOfWeek, that was not imported
+@assert typeof(day_of_week).parameters[1] == java_time_DayOfWeek
+
+date_chronology = LocalDate.now().getChronology() # Should import java.time.chrono.Chronology, that was not imported
+@assert typeof(date_chronology).parameters[1] == java_time_chrono_Chronology
+
+era_chronology = date_chronology.eras() # Should import java.util.List, that was not imported
+@assert typeof(era_chronology).parameters[1] == java_util_List
 
 # Assert non-primitive fields
 @assert Month.JANUARY.getValue() == 1

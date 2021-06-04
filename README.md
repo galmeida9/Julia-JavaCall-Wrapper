@@ -30,4 +30,5 @@ TODOs bacanos não obrigatórios:
 - [X] Apanhar as exceções, try catch + print(exception.getMessage())
 - [x] Criar? methods para mostrar os métodos da instância ou da classe? / Fazer autocomplete propertyName
 - [ ] Poder enviar funções? (try hard)
+- [ ] Override do Base.(==) para poder comparar JavaValues e primitivas
 
