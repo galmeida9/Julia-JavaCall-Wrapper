@@ -1,4 +1,4 @@
-include("../main/project.jl")
+include("../src/project.jl")
 using Main.JavaImport
 
 Boolean   = importJavaLib("java.lang.Boolean")
