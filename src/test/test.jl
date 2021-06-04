@@ -32,8 +32,8 @@ str_test_4 = str_test_1.concat(str_test_2)
 @assert str_test_4.equals("test1test2") == true
 
 # Assert import of libs on-the-fly
-# FIXME: This does not return the correct T in JavaValue{T}
-LocalDate.now().atStartOfDay()
+start_of_day = LocalDate.now().atStartOfDay() # Should import java.time.LocalDateTime, that was not imported
+@assert typeof(start_of_day).parameters[1] == java_time_LocalDateTime
 
 # Assert non-primitive fields
 @assert Month.JANUARY.getValue() == 1

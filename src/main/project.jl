@@ -136,11 +136,19 @@ module JavaImport
     end
 
     # Returns value to be used to instantiate a JavaValue (non-primitives)
-    function getReturnValue(ref)
-        if typeof(ref) == String
+    function getReturnValue(ref, curr_type)
+        # Get generic type, without parametric types
+        generic_type(::Type{T}) where T = eval(nameof(T))
+        type = generic_type(typeof(ref))
+
+        return_type = curr_type
+        if type == String
             ref = JString(ref)
+        elseif type == JavaObject
+            class_name = String(typeof(ref).parameters[1])
+            return_type = Base.eval(Meta.parse("$(getAbstractTypeName(class_name))"))
         end
-        ref
+        [ref, return_type]
     end
     
     # Returns the value mapped to a Vector of JavaValue if it is a vector of JavaObjects, otherwise returns itself
@@ -375,8 +383,8 @@ module JavaImport
             $(getAllVariablesConverted(variables))
             curr_module = getInstanceModule(\"$java_return_type\")
             return_value = jcall($lib, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)
-            return_value = getReturnValue(return_value)
-            JavaValue{$jv_type_name}(return_value, curr_module) 
+            return_value, return_type = getReturnValue(return_value, $jv_type_name)
+            JavaValue{return_type}(return_value, curr_module) 
         end"
     end
 
@@ -395,8 +403,8 @@ module JavaImport
             $(getAllVariablesConverted(variables))
             curr_module = getInstanceModule(\"$java_return_type\")
             return_value = jcall(instance, \"$method_name\", $julia_return_type, ($julia_param_types), $variables)
-            return_value = getReturnValue(return_value)
-            JavaValue{$jv_type_name}(return_value, curr_module)
+            return_value, return_type = getReturnValue(return_value, $jv_type_name)
+            JavaValue{return_type}(return_value, curr_module)
         end"
     end
 
@@ -429,8 +437,8 @@ module JavaImport
                                         cls = classforname(\"$javaLib\")
                                         jcall(cls, \"getField\", JField, (JString, ), \"$field_name\")($lib)
                                     end)()
-                    return_value = getReturnValue(return_value)
-                    JavaValue{$jv_type_name}(
+                    return_value, return_type = getReturnValue(return_value, $jv_type_name)
+                    JavaValue{return_type}(
                         return_value,
                         getInstanceModule(\"$java_field_type\")
                     )
@@ -462,8 +470,8 @@ module JavaImport
                 method_to_parse = "function new$var_types
                                         $(getAllVariablesConverted(variables))
                                         return_value = ($lib)(($julia_param_types), $variables)
-                                        return_value = getReturnValue(return_value)
-                                        JavaValue{$jv_type_name}(return_value, $curr_module_instance)
+                                        return_value, return_type = getReturnValue(return_value, $jv_type_name)
+                                        JavaValue{return_type}(return_value, $curr_module_instance)
                                     end"
                 Base.eval(curr_module_static, Meta.parse(method_to_parse))
             end
@@ -555,5 +563,6 @@ module JavaImport
         curr_module_static
     end
 
-    export getInstanceModule, getReturnValue, mapVectorToJavaValue, getTypesConvertion, importJavaLib, JavaValue # FIXME: ON DELIVERY remove JavaValue?
+    export getAbstractTypeName, getReturnValue, getInstanceModule, mapVectorToJavaValue, getTypesConvertion
+    export importJavaLib, JavaValue
 end
