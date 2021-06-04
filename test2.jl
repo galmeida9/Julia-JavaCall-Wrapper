@@ -1,4 +1,4 @@
-include("src/project.jl")
+include("src/main/project.jl")
 using Main.JavaImport, JavaCall
 
 Math = importJavaLib("java.lang.Math")

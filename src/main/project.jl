@@ -114,13 +114,13 @@ module JavaImport
         generic_type(::Type{T}) where T = eval(nameof(T))
         type = generic_type(typeof(value))
 
-        # TODO: Add remainining types
         types_convertion = Dict(
             Bool        => (x) -> jcall(JavaObject{Symbol("java.lang.Boolean")}, "valueOf", JavaObject{Symbol("java.lang.Boolean")}, (JString,), String(Symbol(x))),
             String      => (x) -> convert(JString, x),
             Char        => (x) -> jcall(JavaObject{Symbol("java.lang.String")}, "valueOf", JavaObject{Symbol("java.lang.String")}, (jchar,), x),
             Int64       => (x) -> convert(JavaObject{Symbol("java.lang.Long")}, x),
             Int32       => (x) -> convert(JavaObject{Symbol("java.lang.Integer")}, x),
+            Int16       => (x) -> convert(JavaObject{Symbol("java.lang.Short")}, x),
             Float64     => (x) -> convert(JavaObject{Symbol("java.lang.Double")}, x),
             Float32     => (x) -> convert(JavaObject{Symbol("java.lang.Float")}, x),
             JavaValue   => (x) -> _getRef(x),
